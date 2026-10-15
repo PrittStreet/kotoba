@@ -77,7 +77,12 @@ final class Voice implements TextToSpeech.OnInitListener {
         }
         tts.setPitch(deeper ? DEEPER : 1f);
         tts.setSpeechRate(ja ? 0.92f : 1f);
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "kotoba");
+        // the engine refuses texts longer than its limit (4000 characters): read them in pieces
+        int max = Math.max(100, TextToSpeech.getMaxSpeechInputLength() - 1);
+        for (int i = 0; i < text.length(); i += max) {
+            String part = text.substring(i, Math.min(text.length(), i + max));
+            tts.speak(part, i == 0 ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD, null, "kotoba" + i);
+        }
     }
 
     private android.speech.tts.Voice current() {

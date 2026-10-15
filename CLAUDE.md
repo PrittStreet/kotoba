@@ -49,8 +49,11 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
   - Phrase dictée pendant une traduction : sa carte est créée tout de suite et attend son tour
     (`waiting` + `runNext`), jamais dans le champ. Pendant une dictée, la touche envoyer finit la
     phrase (elle ne devient « stop » qu'en dehors d'une dictée, `syncSend`). Le texte tapé avant
-    une dictée revient ensuite (`listening.draft`) ; les mots dictés restés dans le champ ne sont
-    jamais convertis en かな (`kanaFrom`).
+    une dictée revient ensuite, de son côté (`listening.draft`) ; les mots dictés restés dans le
+    champ ne sont jamais convertis en かな (`kanaKeep` : plages suivies à chaque modification).
+    Une phrase en cours de fin (« Un instant… ») arrive toujours, sauf effacement ou app en
+    arrière-plan. Une carte en attente l'indique ; « Réessayer » pendant une traduction attend
+    aussi son tour ; la touche stop arrête la traduction, la file et les photos en préparation.
   - Minuteur : chaque fois que le délai de silence repart (début, mots entendus), un événement
     `timer` fait se vider le contour du bouton micro (SVG `.ring`, `pathLength=100`) sur cette durée.
   - Clavier : petit bouton à côté de chaque micro. `KotobaWebView` donne la langue au clavier via
