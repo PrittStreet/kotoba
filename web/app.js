@@ -65,15 +65,18 @@
   // silence: seconds of silence after which dictation ends (set in the settings)
   // voice: 'female' | 'male' for "Écouter"; kana: rōmaji typed on the Japanese side becomes hiragana
   // started: the examples are only shown before the first translation (then they look like messages)
-  const state = { items: [], speaker: 'fr', tier: 'quick', polite: true, romaji: true, silence: 5, voice: 'female', kana: false, started: false, favOnly: false };
+  // kanaSet: the user chose the rōmaji → かな switch themselves; it is no longer switched on automatically
+  const state = { items: [], speaker: 'fr', tier: 'quick', polite: true, romaji: true, silence: 5, voice: 'female', kana: false, kanaSet: false, started: false, favOnly: false };
   const files = new Map();      // id -> image blob sent to Claude (this session only)
   const photoUrls = new Map();  // id -> sharp object URL of that image (this session only)
   let busy = false, ctl = null, keyProblem = '', memKey = '', memWs = '';
   let unfavAsk = ''; // id of the card asking whether to remove its favourite
-  let runStartedAt = 0;
   let listening = null;         // { lang: 'fr' | 'ja', text } while the microphone is on
   const waiting = [];           // cards created during another translation (dictation, photo): run in turn
-  let kanaFrom = 0;             // characters at the start of the field that came from a dictation: never turned into kana
+  let kanaKeep = [];            // dictated words left in the field: never turned into kana
+  let stopShownAt = 0;          // when the send key last became a stop key
+  let endWatch = 0;             // a sentence being finished that never arrives
+  let keyDetail = '';           // Claude's message for the key problem (spend limit date)
 
   // ---------- storage (per-device) ----------
   function load() {
@@ -83,6 +86,7 @@
       if (Array.isArray(d.items)) {
         state.items = d.items
           .filter((i) => i && typeof i.id === 'string' && typeof i.tr === 'string')
+          .filter((i) => !(i.kind === 'image' && !i.photo && !i.thumb && !i.tr && !(i.blocks && i.blocks.length)))
           .map((i) => i.status === 'pending' ? Object.assign({}, i, { status: 'error', err: 'Traduction interrompue.' }) : i);
       }
       if (d.speaker === 'fr' || d.speaker === 'ja') state.speaker = d.speaker;
@@ -92,29 +96,40 @@
       if (typeof d.silence === 'number' && d.silence >= 1 && d.silence <= 15) state.silence = d.silence;
       if (d.voice === 'male' || d.voice === 'female') state.voice = d.voice;
       if (typeof d.kana === 'boolean') state.kana = d.kana;
+      state.kanaSet = d.kanaSet === true;
       state.started = d.started === true || state.items.length > 0 || loadUsage().n > 0;
     } catch (e) { /* storage unavailable */ }
   }
   // Photos are heavy: if storage is full, the stored copy drops pictures one at a time, oldest
   // non-favourites first, favourites last, then the thumbnails. The cards in memory keep theirs.
+  let leftOut = new Set(), savedCount = 0; // photos the last save could not fit, and how many cards it had
   function save() {
-    const prefs = { speaker: state.speaker, tier: state.tier, polite: state.polite, romaji: state.romaji, silence: state.silence, voice: state.voice, kana: state.kana, started: state.started };
+    const prefs = { speaker: state.speaker, tier: state.tier, polite: state.polite, romaji: state.romaji, silence: state.silence, voice: state.voice, kana: state.kana, kanaSet: state.kanaSet, started: state.started };
     const items = state.items.slice();
     const write = () => {
       try { localStorage.setItem(KEY, JSON.stringify(Object.assign({ items }, prefs))); return true; } catch (e) { return false; }
     };
-    if (write()) return;
+    // each try serialises the whole conversation: start from what did not fit last time (unless
+    // cards were removed since), then drop 1, 2, 4… more pictures
+    if (state.items.length < savedCount) leftOut = new Set();
+    savedCount = state.items.length;
+    const done = () => { leftOut = new Set(items.filter((x, k) => state.items[k].photo && !x.photo).map((x) => x.id)); return true; };
+    const strip = (k, f) => { items[k] = Object.assign({}, items[k], { [f]: '' }); };
     const order = items.map((i, k) => k).filter((k) => items[k].photo)
       .sort((a, b) => (Number(!!items[a].fav) - Number(!!items[b].fav)) || a - b);
-    for (const k of order) {
-      items[k] = Object.assign({}, items[k], { photo: '' });
-      if (write()) return;
+    order.filter((k) => leftOut.has(items[k].id)).forEach((k) => strip(k, 'photo'));
+    if (write()) return done();
+    const rest = order.filter((k) => items[k].photo);
+    for (let i = 0, n = 1; i < rest.length; i += n, n *= 2) {
+      rest.slice(i, i + n).forEach((k) => strip(k, 'photo'));
+      if (write()) return done();
     }
-    for (let k = 0; k < items.length; k++) {
-      if (!items[k].thumb) continue;
-      items[k] = Object.assign({}, items[k], { thumb: '' });
-      if (write()) return;
+    const thumbs = items.map((i, k) => k).filter((k) => items[k].thumb);
+    for (let i = 0, n = 1; i < thumbs.length; i += n, n *= 2) {
+      thumbs.slice(i, i + n).forEach((k) => strip(k, 'thumb'));
+      if (write()) return done();
     }
+    return false;
   }
   // The key typed in the settings wins; otherwise the one built into the app, if any.
   function storedKey() {
@@ -145,15 +160,15 @@
   const inConv = (i) => !i.out;
   const convItems = () => state.items.filter(inConv);
   function trimItems() {
-    while (state.items.length > MAX_ITEMS) {
-      const last = state.items.length - 1;
-      const k = state.items.findIndex((i, n) => !i.fav && n < last && i.status !== 'pending');
-      if (k < 0) break;
-      const id = state.items[k].id;
-      forgetPhoto(id);
-      state.items.splice(k, 1);
-      const c = thread.querySelector('.card[data-id="' + id + '"]');
+    let conv = convItems();
+    while (conv.length > MAX_ITEMS) {
+      const old = conv.find((i, n) => n < conv.length - 1 && i.status !== 'pending');
+      if (!old) break;
+      if (old.fav) old.out = true; // leaves the conversation, stays in the favourites
+      else { forgetPhoto(old.id); state.items.splice(state.items.indexOf(old), 1); }
+      const c = state.favOnly ? null : thread.querySelector('.card[data-id="' + old.id + '"]');
       if (c) c.remove();
+      conv = convItems();
     }
   }
 
@@ -177,23 +192,32 @@
 
   const JA_RE = /[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]/;
   const FR_RE = /[àâäçéèêëîïôöùûüœæ]/i;
+  // French words that never read as rōmaji; lower case or capitalised only (not ON, LA… in Japanese text)
+  const FR_WORDS = /(?:^|[^A-Za-zÀ-ÿœæ])(?:[Oo]ù|[Ee]st|[Dd]u|[Dd]es|[Ll]es?|[Ll]a|[Uu]ne|[Ii]ls?|[Ee]lles?|[Jj]e|[Tt]u|[Vv]ous|[Nn]ous|[Ee]t|[Qq]ue|[Qq]ui|[Qq]uoi|[Cc]omment|[Cc]ombien|[Pp]our|[Aa]vec|[Dd]ans|[Pp]as|[Ss]vp|[Mm]erci|[Bb]onjour|[Bb]onsoir|[Oo]ui|[Cc]e|[Cc]ette|[Cc][’']est|[Jj][’']ai|[Vv]oudrais|[Pp]eux|[Pp]eut)(?![A-Za-zÀ-ÿœæ])/;
   function detectSrc(text) {
     if (JA_RE.test(text)) {
       if (state.speaker === 'fr') {
-        // French sentence quoting a Japanese name or dish ("il reste du 納豆 ?")
+        // French sentence quoting a Japanese name or dish ("Il y a du 納豆 ?", "Où est 新宿駅 ?")
         const latin = (text.match(/[a-zà-ÿœæ]{2,}/gi) || []).join('').length;
         const ja = (text.match(/[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]/g) || []).length;
-        if (latin > ja * 2 && /[a-zà-ÿ]{2,}\s+[a-zà-ÿ]{2,}/i.test(text)) return 'fr';
+        if ((latin > ja * 2 && /[a-zà-ÿ]{2,}\s+[a-zà-ÿ]{2,}/i.test(text)) || FR_WORDS.test(text)) return 'fr';
       }
       return 'ja';
     }
-    if (state.speaker === 'ja' && !FR_RE.test(text)) return 'ja'; // rōmaji typed on the Japanese side
+    // Latin letters on the Japanese side: rōmaji only if it reads as rōmaji ("Merci beaucoup" does not)
+    if (state.speaker === 'ja' && !FR_RE.test(text) && !FR_WORDS.test(text)
+      && !/[a-z]/i.test(toKana(text.normalize('NFD').replace(/\u0304/g, ''), true))) return 'ja';
     return 'fr';
   }
 
-  function copyFor(code, kind) {
+  const BUILTIN_PROBLEM = { bad_key: 'refusée', no_credit: 'plus de crédit', spend_limit: 'limite de dépenses atteinte', needs_workspace: 'workspace', bad_workspace: 'workspace', forbidden: 'accès refusé' };
+  // detail: Claude's own message (the spend limit says until when)
+  function copyFor(code, kind, detail) {
+    const m = code === 'spend_limit' && /regain access on (\d{4}-\d{2}-\d{2})/i.exec(detail || '');
+    const until = m ? ' jusqu’au ' + new Date(m[1] + 'T12:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : '';
+    if (usingBuiltin() && BUILTIN_PROBLEM[code]) return 'La clé fournie avec l’app ne marche plus (' + BUILTIN_PROBLEM[code] + until + ') : préviens la personne qui t’a donné Kotoba, ou colle ta propre clé dans les réglages.';
     switch (code) {
-      case 'spend_limit': return 'Limite de dépenses de la clé atteinte : relève-la sur platform.claude.com (Limits) ou attends la date indiquée par Claude.';
+      case 'spend_limit': return 'Limite de dépenses de la clé atteinte' + until + ' : relève-la sur platform.claude.com (Limits).';
       case 'no_key': return 'Ajoute ta clé API Claude dans les réglages pour traduire.';
       case 'bad_key': return 'Clé API refusée. Vérifie-la dans les réglages.';
       case 'no_credit': return 'Plus de crédit sur ton compte Claude : recharge-le sur platform.claude.com.';
@@ -215,7 +239,7 @@
   }
   const KEY_CODES = new Set(['no_key', 'bad_key', 'no_credit', 'needs_workspace', 'bad_workspace', 'spend_limit']);
   function syncBanner() {
-    const msg = !getKey() ? 'Pour traduire, ajoute ta clé API Claude.' : (keyProblem ? copyFor(keyProblem) : '');
+    const msg = !getKey() ? 'Pour traduire, ajoute ta clé API Claude.' : (keyProblem ? copyFor(keyProblem, null, keyDetail) : '');
     $('#bannerText').textContent = msg;
     banner.hidden = !msg;
   }
@@ -263,6 +287,7 @@
   async function claude({ model, content, maxTokens, signal, onText }) {
     const key = getKey();
     if (!key) throw apiErr('no_key');
+    if (/[^\x21-\x7e]/.test(key)) throw apiErr('bad_key');
     const headers = Object.assign({ 'content-type': 'application/json' }, apiHeaders(key, getWorkspace()));
     const body = {
       model,
@@ -329,6 +354,7 @@
   }
   // A free call that only checks the key (and workspace). Returns { code, detail }, code '' when it works.
   async function testKey(key, workspace) {
+    if (/[^\x21-\x7e]/.test(key)) return { code: 'bad_key', detail: '' };
     try {
       const res = await fetch(API + 'models?limit=1', { headers: apiHeaders(key, workspace) });
       if (res.ok) return { code: '', detail: '' };
@@ -486,7 +512,7 @@
   async function run(it) {
     if (busy) return;
     busy = true;
-    runStartedAt = Date.now();
+    if (unfavAsk === it.id) unfavAsk = ''; // a retried card does not ask about its favourite again (#35)
     syncSend();
     it.status = 'pending'; it.err = '';
     if (it.kind === 'text') { it.tr = ''; it.ro = ''; it.lit = ''; it.note = ''; } else { it.tr = ''; it.blocks = []; it.title = ''; it.raw = ''; }
@@ -535,12 +561,12 @@
       else if (it.kind === 'image') finishLens(it, lensPending);
       else if (e && typeof e.text === 'string' && e.text) applyText(it, e.text);
       if (code === 'cancelled') {
-        it.status = it.tr ? 'done' : 'error';
-        it.err = it.tr ? '' : copyFor(code, it.kind);
-      } else {
         it.status = 'error';
         it.err = copyFor(code, it.kind);
-        if (KEY_CODES.has(code)) { keyProblem = code === 'no_key' ? '' : code; syncBanner(); }
+      } else {
+        it.status = 'error';
+        it.err = copyFor(code, it.kind, e && e.detail);
+        if (KEY_CODES.has(code)) { keyProblem = code === 'no_key' ? '' : code; keyDetail = (e && e.detail) || ''; syncBanner(); }
       }
     } finally {
       busy = false; ctl = null;
@@ -592,12 +618,12 @@
   }
   // Under a Japanese translation: the rōmaji (JA) or what the Japanese says word for word (FR).
   function readingLine(it) {
-    const fr = it.view === 'fr' && !!it.lit;
+    const fr = !!it.lit && (it.view === 'fr' || !it.ro);
     const p = el('p', 'ro');
     const t = el('span', null, fr ? it.lit : it.ro);
     t.lang = fr ? 'fr' : 'ja-Latn';
     p.append(t);
-    if (it.lit && it.status !== 'pending') {
+    if (it.ro && it.lit && it.status !== 'pending') {
       const g = el('span', 'rt');
       g.setAttribute('role', 'group');
       g.setAttribute('aria-label', 'Lecture ou sens mot à mot');
@@ -655,7 +681,8 @@
       }
       c.append(e);
     }
-    if (!example && it.status !== 'pending' && it.tr) {
+    if (it.status === 'error' && it.tr) c.classList.add('cut');
+    if (!example && it.status === 'done' && it.tr) {
       const a = el('div', 'acts');
       if (it.kind === 'text' && tts) a.append(actBtn('speak', 'Écouter'));
       a.append(actBtn('copy', 'Copier'));
@@ -825,7 +852,9 @@
   }
   // While dictating, the send key finishes the sentence: it only becomes a stop key otherwise.
   function syncSend() {
-    const on = busy && !listening;
+    // text in the field: the key sends it (it waits its turn); otherwise, during a translation, it stops
+    const on = busy && !listening && !ta.value.trim();
+    if (on && !sendBtn.classList.contains('stop')) stopShownAt = Date.now();
     sendBtn.innerHTML = on ? ICONS.stop : ICONS.send;
     sendBtn.classList.toggle('stop', on);
     sendBtn.setAttribute('aria-label', on ? 'Arrêter' : 'Traduire');
@@ -992,40 +1021,50 @@
     logSpeech('page : fin demandée');
     syncMic();
     try { stt.stop(); } catch (e) {}
+    // the recognizer must answer within 1.5 s; never leave the keys stuck on "Un instant…"
+    clearTimeout(endWatch);
+    endWatch = setTimeout(() => { if (listening && listening.ending) cancelListening(true); }, 5000);
   }
   function toggleMic(lang) {
     if (listening) {
-      // the sentence is being finished: it gets translated, other taps wait too
-      if (listening.lang === lang || listening.ending) { finishListening(); return; }
+      // the sentence is being finished: it gets translated, then the other microphone starts
+      if (listening.ending) { if (lang !== listening.lang) listening.next = lang; return; }
+      if (listening.lang === lang) { finishListening(); return; }
       cancelListening();
     }
     if (!stt) { keyboardDictation(lang); return; }
     if (!getKey()) { syncBanner(); openSettings('Ajoute d’abord ta clé API Claude.'); return; }
     stopSpeaking();
     if (document.activeElement === ta) ta.blur();
+    // draft: what was typed in the field, and on which side; it comes back once the dictation is over
+    listening = { lang, text: '', ending: false, draft: ta.value, side: state.speaker };
     state.speaker = lang;
-    // draft: what was typed in the field; it comes back once the dictation is over
-    listening = { lang, text: '', ending: false, draft: ta.value };
     logSpeech('—— dictée ' + (lang === 'ja' ? 'japonais' : 'français') + ', silence ' + state.silence + ' s');
     ta.value = '';
     autosize();
     syncPrefs(); save();
     try { stt.start(lang === 'ja' ? 'ja-JP' : 'fr-FR', Math.round(state.silence * 1000)); }
-    catch (e) { restoreDraft(listening.draft); listening = null; syncMic(); toast('La dictée n’a pas pu démarrer.'); }
+    catch (e) { const l = listening; listening = null; restoreDraft(l); syncMic(); toast('La dictée n’a pas pu démarrer.'); }
   }
-  function restoreDraft(draft) {
-    ta.value = draft || '';
-    kanaFrom = 0;
+  // The typed draft comes back, on the side it was typed on (detection, rōmaji → かな, keyboard).
+  function restoreDraft(l, heard) {
+    const d = l.draft || '';
+    ta.value = heard ? d + (!d || /\s$/.test(d) || l.lang === 'ja' ? '' : ' ') + heard : d;
     autosize();
+    syncSend(); // the field decides between send and stop
+    if (heard) return; // the words just heard: the field is on their side
+    if (d && l.side && l.side !== state.speaker) { state.speaker = l.side; syncPrefs(); save(); }
   }
-  // Words already heard stay in the field to be corrected or sent (never turned into kana);
-  // otherwise the typed draft comes back.
-  function cancelListening() {
-    if (!listening) return;
+  // Words already heard stay in the field after the draft, to be corrected or sent (never turned
+  // into kana). A sentence being finished still arrives, unless forced (app in the background).
+  function cancelListening(force) {
+    if (!listening || (listening.ending && !force)) return;
     const l = listening;
     listening = null;
+    clearTimeout(endWatch);
     try { stt.cancel(); } catch (e) {}
-    if (l.text) kanaFrom = ta.value.length; else restoreDraft(l.draft);
+    if (l.text) kanaKeep.push(l.text);
+    restoreDraft(l, l.text);
     syncMic();
   }
   function micError(code, lang) {
@@ -1073,17 +1112,16 @@
       ta.value = listening.text;
       autosize();
     } else if (ev.type === 'final' || ev.type === 'error') {
-      const { lang, draft } = listening;
+      const l = listening, lang = l.lang;
       const text = ((ev.type === 'final' && ev.text) || '').trim();
       listening = null;
+      clearTimeout(endWatch);
       syncMic();
-      restoreDraft(draft);
-      if (ev.type === 'error' || !text) {
-        toast(micError(ev.type === 'error' ? ev.code : 'no-speech', lang), 3200);
-        return;
-      }
-      if (!getKey()) { ta.value = text; autosize(); syncBanner(); openSettings('Ajoute d’abord ta clé API Claude.'); return; }
-      sendText(text, lang, true); // waits for its turn if a translation is under way
+      restoreDraft(l);
+      if (ev.type === 'error' || !text) toast(micError(ev.type === 'error' ? ev.code : 'no-speech', lang), 3200);
+      else if (!getKey()) { ta.value = text; autosize(); syncBanner(); openSettings('Ajoute d’abord ta clé API Claude.'); return; }
+      else sendText(text, lang, true); // waits for its turn if a translation is under way
+      if (l.next) setTimeout(() => toggleMic(l.next), 0); // the other microphone tapped meanwhile
     }
   }
   // Called by the Android app: kotobaNative.speech({ type, text, code })
@@ -1105,7 +1143,7 @@
         return;
       }
       // The keyboard stays in the alphabet: Kotoba writes the kana itself.
-      if (!state.kana) {
+      if (!state.kana && !state.kanaSet) {
         state.kana = true; save(); syncMic();
         try { if (NATIVE) NATIVE.keyboard('ja', true); } catch (e) {} // the keyboard reads the new settings
       }
@@ -1160,11 +1198,18 @@
   }
   const kanaTyping = () => state.kana && state.speaker === 'ja' && !listening;
   // Convert as they type, unless the keyboard is still composing a word or the cursor is elsewhere.
+  // Rōmaji → kana on what was typed; dictated words still in the field (kanaKeep) stay as they are.
+  function kanaConvert(v, final) {
+    const marks = [];
+    kanaKeep.forEach((w) => { const k = w ? v.indexOf(w) : -1; if (k >= 0) marks.push([k, k + w.length]); });
+    marks.sort((a, b) => a[0] - b[0]);
+    let out = '', i = 0;
+    marks.forEach(([a, b]) => { if (a < i) return; out += toKana(v.slice(i, a), true) + v.slice(a, b); i = b; });
+    return out + toKana(v.slice(i), final);
+  }
   function liveKana() {
-    kanaFrom = Math.min(kanaFrom, ta.value.length);
-    const keep = ta.value.slice(0, kanaFrom), tail = ta.value.slice(kanaFrom);
-    if (!kanaTyping() || !/[a-z]/i.test(tail) || ta.selectionStart !== ta.value.length) return;
-    const k = keep + toKana(tail, false);
+    if (!kanaTyping() || ta.selectionStart !== ta.value.length) return;
+    const k = kanaConvert(ta.value, false);
     if (k === ta.value) return;
     ta.value = k;
     ta.setSelectionRange(k.length, k.length);
@@ -1184,15 +1229,24 @@
   }
   // forcedSrc: the language of the microphone key, when the text was dictated.
   function submit(forcedSrc, spoken) {
-    if (busy) return;
-    const v = ta.value, cut = Math.min(kanaFrom, v.length);
-    const text = (!spoken && kanaTyping() ? v.slice(0, cut) + toKana(v.slice(cut), true) : v).trim();
+    const v = ta.value;
+    const text = (!spoken && kanaTyping() ? kanaConvert(v, true) : v).trim();
     if (!text) { ta.focus(); return; }
     if (!getKey()) { syncBanner(); openSettings('Ajoute d’abord ta clé API Claude.'); return; }
     ta.value = '';
-    kanaFrom = 0;
+    kanaKeep = [];
     autosize();
+    syncSend();
     sendText(text, forcedSrc || detectSrc(text), spoken);
+  }
+  // The stop key: the translation under way and the sentences waiting for their turn.
+  function stopAll() {
+    waiting.splice(0).forEach((w) => {
+      if (w.status !== 'pending') return;
+      w.status = 'error'; w.err = copyFor('cancelled'); updateCard(w);
+    });
+    if (ctl) ctl.abort();
+    save();
   }
   // A new card; translated now, or after the translation under way.
   function sendText(text, src, spoken) {
@@ -1291,7 +1345,8 @@
     // Stop a translation only once its stop key has been visible a moment: a second tap meant to
     // send the dictated sentence used to cancel it.
     if (listening) { finishListening(); return; }
-    if (busy) { if (ctl && Date.now() - runStartedAt > 1000) ctl.abort(); return; }
+    // what the key shows decides, and it stops only once it has been shown a moment
+    if (sendBtn.classList.contains('stop')) { if (Date.now() - stopShownAt > 1000) stopAll(); return; }
     submit();
   });
   // Tapping send keeps the keyboard open for the next sentence.
@@ -1299,10 +1354,10 @@
   ta.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
-      if (!busy && !listening) submit();
+      if (!listening) submit(); // during a translation it waits its turn
     }
   });
-  ta.addEventListener('input', (e) => { autosize(); if (!e.isComposing) liveKana(); });
+  ta.addEventListener('input', (e) => { autosize(); if (!e.isComposing) liveKana(); syncSend(); });
   ta.addEventListener('compositionend', () => setTimeout(liveKana, 0));
 
   micBtns.forEach((b) => b.addEventListener('click', () => toggleMic(b.dataset.mic)));
@@ -1348,6 +1403,7 @@
       return false;
     });
     ta.value = '';
+    kanaKeep = [];
     autosize();
     syncPrefs(); save(); render();
     toast(kept ? 'Conversation effacée, favoris gardés à part' : 'Conversation effacée');
@@ -1373,7 +1429,6 @@
   // the camera input asks for the rear camera, the gallery input for an existing photo.
   photoPickers.forEach(([btn, input]) => {
     btn.addEventListener('click', (e) => {
-      if (busy) { e.preventDefault(); toast('Attends la fin de la traduction en cours.'); return; }
       if (!getKey()) { e.preventDefault(); openSettings('Ajoute d’abord ta clé API Claude.'); return; }
       cancelListening();
       input.value = '';
@@ -1391,7 +1446,10 @@
     const cv = document.createElement('canvas');
     cv.width = Math.max(1, Math.round(bmp.width * k));
     cv.height = Math.max(1, Math.round(bmp.height * k));
-    cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+    const g = cv.getContext('2d');
+    g.fillStyle = '#fff'; // JPEG has no transparency: transparent pixels would turn black
+    g.fillRect(0, 0, cv.width, cv.height);
+    g.drawImage(bmp, 0, 0, cv.width, cv.height);
     return cv;
   }
   // Re-encode every photo as a reasonably sized JPEG: phone photos can be large or in formats Claude refuses.
@@ -1412,14 +1470,10 @@
     finally { try { bmp.close(); } catch (e) {} }
   }
   async function handlePhoto(f) {
-    if (busy) { toast('Attends la fin de la traduction en cours.'); return; }
     const it = { id: newId(), kind: 'image', src: 'ja', tgt: 'fr', text: '', tr: '', ro: '', note: '', fav: false, ts: Date.now(), status: 'pending', thumb: '', photo: '', w: 0, h: 0, title: '', blocks: [] };
     addItem(it);
-    // a translation under way from now on: nothing else starts while the photo is prepared
-    busy = true; syncSend();
-    let img;
-    try { img = await prepareImage(f); } finally { busy = false; syncSend(); }
-    if (!state.items.includes(it)) { runNext(); return; } // cleared meanwhile: not sent
+    const img = await prepareImage(f);
+    if (!state.items.includes(it) || it.status !== 'pending') return; // cleared or stopped meanwhile: not sent
     it.thumb = img.thumb;
     it.photo = img.photo;
     it.w = img.w; it.h = img.h;
@@ -1427,12 +1481,11 @@
     if (img.blob.size > 3.7 * 1024 * 1024) {
       it.status = 'error'; it.err = 'Photo trop lourde. Essaie une image plus petite.';
       updateCard(it); save();
-      runNext();
       return;
     }
     files.set(it.id, img.blob);
     save();
-    run(it);
+    if (busy) waiting.push(it); else run(it); // after the translation under way
   }
 
   $('#closeShow').addEventListener('click', closeShow);
@@ -1476,6 +1529,7 @@
   function openSettings(msg) {
     cancelListening();
     closeSheet();
+    resetKeyDelete();
     syncSilence();
     syncVoice();
     $('#speechLog').textContent = speechLog.length ? speechLog.join('\n') : 'Rien pour l’instant : fais une dictée, puis reviens ici.';
@@ -1493,10 +1547,16 @@
     if (!getKey()) setTimeout(() => keyInput.focus(), 60);
   }
   function closeSettings() { settingsEl.hidden = true; if (document.activeElement === keyInput) keyInput.blur(); }
+  // Pasted keys may carry invisible characters or typographic dashes, which no HTTP header accepts.
+  const cleanKey = (v) => v.normalize('NFKC').replace(/[‐-―−]/g, '-').replace(/[\s\u200b-\u200d\u2060\ufeff]+/g, '');
   async function saveKey() {
-    const k = keyInput.value.replace(/\s+/g, '');
-    const w = wsInput.value.replace(/\s+/g, '');
+    const k = cleanKey(keyInput.value);
+    const w = cleanKey(wsInput.value);
     if (!k && !BUILTIN.apiKey) { setKeyStatus('Colle ta clé dans le champ.', 'bad'); return; }
+    if (!/^[\x21-\x7e]*$/.test(k)) { setKeyStatus('Ta clé contient un caractère qui n’existe pas dans une clé : recopie-la depuis platform.claude.com.', 'bad'); return; }
+    // the key test cannot see a credit or spend limit problem: keep it if the key did not change
+    const sameKey = getKey() === (k || BUILTIN.apiKey) && getWorkspace() === (k ? w : (BUILTIN.workspace || ''));
+    const limit = sameKey && (keyProblem === 'no_credit' || keyProblem === 'spend_limit') ? keyProblem : '';
     if (w && !/^wrkspc_[A-Za-z0-9]+$/.test(w)) { setKeyStatus('L’ID du workspace commence par wrkspc_ : copie-le en entier, ou laisse le champ vide.', 'bad'); return; }
     setKey(k);
     setWorkspace(w);
@@ -1510,7 +1570,9 @@
     const r = await testKey(getKey(), getWorkspace()); // empty field: the key built into the app
     btn.disabled = false;
     if (storedKey() !== k || storedWorkspace() !== w) return;
+    if (!r.code && limit) { keyProblem = limit; syncBanner(); setKeyStatus('La clé répond, mais : ' + copyFor(limit, null, keyDetail), 'bad'); return; }
     if (!r.code) { setKeyStatus('Clé valide ✓ Tu peux traduire.', 'ok'); return; }
+    if (usingBuiltin()) { if (KEY_CODES.has(r.code)) { keyProblem = r.code; syncBanner(); } setKeyStatus(copyFor(r.code), 'bad'); return; }
     if (KEY_CODES.has(r.code)) { keyProblem = r.code; syncBanner(); }
     if (r.code === 'bad_key') setKeyStatus('Clé refusée : vérifie que tu l’as copiée en entier.', 'bad');
     else if (r.code === 'needs_workspace') { setKeyStatus('Ta clé n’est liée à aucun workspace : colle l’ID du workspace ci-dessus (wrkspc_…), ou crée une clé liée au workspace Default.', 'bad'); wsInput.focus(); }
@@ -1528,8 +1590,17 @@
     $('#keyShow').textContent = hide ? 'Afficher' : 'Masquer';
   });
   let keyDeleteAsk = 0;
+  function resetKeyDelete() {
+    clearTimeout(keyDeleteAsk); keyDeleteAsk = 0;
+    const b = $('#keyDelete');
+    b.textContent = 'Supprimer'; b.classList.remove('danger');
+  }
   $('#keyDelete').addEventListener('click', () => {
     const b = $('#keyDelete');
+    if (!storedKey() && !storedWorkspace()) {
+      setKeyStatus(BUILTIN.apiKey ? 'Aucune clé à supprimer : Kotoba utilise la clé fournie avec l’app.' : 'Aucune clé enregistrée sur ce téléphone.');
+      return;
+    }
     if (!keyDeleteAsk) {
       b.textContent = 'Confirmer la suppression';
       b.classList.add('danger');
@@ -1557,7 +1628,7 @@
   document.querySelectorAll('[data-voice]').forEach((b) => b.addEventListener('click', () => setVoice(b.dataset.voice)));
   $('#tryFr').addEventListener('click', () => speak('Bonjour, je suis la voix de Kotoba. Tu m’entends bien ?', 'fr'));
   $('#tryJa').addEventListener('click', () => speak('こんにちは。ことばの声です。よろしくお願いします。', 'ja'));
-  $('#kanaInput').addEventListener('change', () => { state.kana = $('#kanaInput').checked; save(); syncMic(); });
+  $('#kanaInput').addEventListener('change', () => { state.kana = $('#kanaInput').checked; state.kanaSet = true; save(); syncMic(); });
   silenceInput.addEventListener('input', () => {
     const v = Number(silenceInput.value);
     if (v >= 1 && v <= 15) { state.silence = v; syncSilence(); save(); }
@@ -1606,6 +1677,7 @@
   function openLens(it) {
     const src = photoSrc(it);
     if (!src) return;
+    closeSheet();
     lvItem = it; lvZoom = 1;
     $('#lvTitle').textContent = it.title || 'Photo traduite';
     lvOrig.setAttribute('aria-pressed', 'false');
@@ -1663,7 +1735,7 @@
     else if (!lensView.hidden) closeLens();
     else if (!showEl.hidden) closeShow();
     else if (!settingsEl.hidden) closeSettings();
-    else if (listening) cancelListening();
+    else if (listening && !listening.ending) cancelListening();
     else if (!confirmBar.hidden) confirmBar.hidden = true;
     else if (unfavAsk) { const a = state.items.find((i) => i.id === unfavAsk); unfavAsk = ''; if (a) updateCard(a); }
     else if (state.favOnly) { state.favOnly = false; syncPrefs(); render(); }
@@ -1672,7 +1744,8 @@
   }
   window.kotobaBack = back;
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') back(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelListening(); stopSpeaking(); } });
+  // Android stops the microphone in the background: nothing more will arrive
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelListening(true); stopSpeaking(); } });
 
   // ---------- start ----------
   load();

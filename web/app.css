@@ -151,7 +151,7 @@ a{color:var(--ai)}
 /* Big view for showing the phone to someone */
 .show{position:fixed;inset:0;z-index:20;background:var(--paper);display:flex;flex-direction:column;gap:12px;padding-top:calc(12px + var(--inset-top));padding-bottom:calc(20px + var(--inset-bottom));padding-left:max(20px,env(safe-area-inset-left,0px));padding-right:max(20px,env(safe-area-inset-right,0px))}
 .show .close{align-self:flex-end}
-.big{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;justify-content:center;gap:16px}
+.big{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;justify-content:safe center;gap:16px}
 .from{margin:0;font-size:.88rem;color:var(--muted)}
 .bigtr{margin:0;font-size:clamp(1.9rem,8.5vw,3.4rem);line-height:1.45;font-weight:700;overflow-wrap:anywhere;white-space:pre-wrap}
 .bigro{margin:0;font-size:1.1rem;color:var(--muted);overflow-wrap:anywhere}
@@ -181,6 +181,7 @@ a{color:var(--ai)}
 .set-row{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:.92rem}
 .switch{flex:none;width:22px;height:22px;accent-color:var(--ai);margin:0}
 .log{margin:8px 0;max-height:240px;overflow:auto;padding:8px 10px;border-radius:10px;background:var(--paper);border:1px solid var(--line);font:.72rem/1.45 ui-monospace,"Roboto Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink)}
+.card.cut .tr,.card.cut .ro,.card.cut .rows{opacity:.55}
 .ask{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;padding:8px 8px 8px 12px;border-radius:12px;background:var(--paper);border:1px solid var(--line);font-size:.88rem}
 .ask span{flex:1 0 100%}
 .ask .txt-btn:first-of-type{margin-left:auto}
