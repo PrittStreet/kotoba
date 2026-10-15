@@ -58,6 +58,18 @@ final class Bridge {
         app.runOnUiThread(() -> app.voice.speak(text, lang));
     }
 
+    /** "male" or "female": the voice used from now on. */
+    @JavascriptInterface
+    public void voice(String gender) {
+        app.runOnUiThread(() -> app.voice.setMale("male".equals(gender)));
+    }
+
+    /** Installed voices per language, with their guessed gender (Voice.describe). */
+    @JavascriptInterface
+    public String voices() {
+        return app.voice.describe();
+    }
+
     @JavascriptInterface
     public void stopSpeaking() {
         app.runOnUiThread(() -> app.voice.stop());

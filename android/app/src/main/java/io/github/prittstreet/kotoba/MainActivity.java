@@ -13,9 +13,11 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.speech.SpeechRecognizer;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.InputMethodSubtype;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -109,6 +111,9 @@ public class MainActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setAllowFileAccess(false);
         s.setSupportZoom(false);
+        // The page follows the system font size (Samsung phones are often set large), up to 120 %:
+        // beyond that the microphone keys and the translations drawn on photos no longer fit.
+        s.setTextZoom(Math.min(120, Math.round(getResources().getConfiguration().fontScale * 100)));
         web.addJavascriptInterface(new Bridge(this), "KotobaAndroid");
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -201,6 +206,18 @@ public class MainActivity extends Activity {
         web.evaluateJavascript("window.kotobaNative && kotobaNative.speech(" + ev + ")", null);
     }
 
+    /** The silence count (re)starts: the dictation ends in ms unless words are heard (the key's outline). */
+    void emitTimer(long ms) {
+        JSONObject ev = new JSONObject();
+        try {
+            ev.put("type", "timer");
+            ev.put("ms", ms);
+        } catch (JSONException e) {
+            return;
+        }
+        web.evaluateJavascript("window.kotobaNative && kotobaNative.speech(" + ev + ")", null);
+    }
+
     // ---------- keyboard ----------
 
     /** lang: "fr" or "ja". The keyboard opens in that language (if installed); show: open it now. */
@@ -212,7 +229,34 @@ public class MainActivity extends Activity {
         if (show) {
             web.requestFocus();
             imm.showSoftInput(web, InputMethodManager.SHOW_IMPLICIT);
+            // Not every keyboard follows the hint (Samsung's doesn't): tell the page which language
+            // the keyboard really shows, so it can say how to switch.
+            web.postDelayed(() -> reportKeyboard(lang), 900);
         }
+    }
+
+    @SuppressWarnings("deprecation") // getLocale: older keyboards only fill that one
+    private void reportKeyboard(String lang) {
+        InputMethodManager imm = getSystemService(InputMethodManager.class);
+        if (imm == null) return;
+        InputMethodSubtype subtype = imm.getCurrentInputMethodSubtype();
+        String shown = subtype == null ? "" : subtype.getLanguageTag();
+        if (shown.isEmpty() && subtype != null) shown = subtype.getLocale();
+        String ime = null;
+        try {
+            ime = Settings.Secure.getString(getContentResolver(), Settings.Secure.DEFAULT_INPUT_METHOD);
+        } catch (SecurityException ignored) {
+            // not readable on this phone: the page gives the general advice
+        }
+        JSONObject ev = new JSONObject();
+        try {
+            ev.put("wanted", lang);
+            ev.put("actual", shown);
+            ev.put("ime", ime == null ? "" : ime);
+        } catch (JSONException e) {
+            return;
+        }
+        web.evaluateJavascript("window.kotobaNative && kotobaNative.keyboard && kotobaNative.keyboard(" + ev + ")", null);
     }
 
     // ---------- photos: camera app or photo picker ----------
@@ -284,7 +328,15 @@ public class MainActivity extends Activity {
                 }
             }
         }
-        callback.onReceiveValue(result == null ? null : new Uri[]{result});
+        if (result == null) {
+            callback.onReceiveValue(null);
+            return;
+        }
+        Uri picked = result;
+        new Thread(() -> {
+            Uri usable = Photos.usable(this, picked);
+            runOnUiThread(() -> callback.onReceiveValue(new Uri[]{usable}));
+        }, "kotoba-photo").start();
     }
 
     private void clearPhotos() {

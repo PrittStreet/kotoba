@@ -33,20 +33,56 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
   `WebViewAssetLoader` sur `https://appassets.androidplatform.net/assets/index.html`.
   - Pont JS `window.KotobaAndroid` (`Bridge.java`) : `canListen`,
     `startListening("fr-FR"|"ja-JP", silenceMs)`, `stopListening`, `cancelListening`,
-    `keyboard("fr"|"ja", show)`, `speak(text, "fr"|"ja")`, `stopSpeaking`, `copy`, `insets`,
-    `darkBars`, `version`. Retours vers la page : `kotobaNative.speech({type, text, code})`
-    (`ready`, `partial`, `final`, `error`), `kotobaInsets(top, bottom)`, `kotobaBack()`.
+    `keyboard("fr"|"ja", show)`, `speak(text, "fr"|"ja")`, `stopSpeaking`, `voice("female"|"male")`,
+    `voices`, `copy`, `insets`, `darkBars`, `config`, `version`. Retours vers la page : `kotobaNative.speech({type, text, code})`
+    (`ready`, `partial`, `final`, `error`, `log`, `timer` avec `ms`), `kotobaNative.keyboard({wanted,
+    actual, ime})`, `kotobaInsets(top, bottom)`, `kotobaBack()`.
   - Micro : `SpeechRecognizer` d'Android (`SpeechInput.java`), langue imposée par le bouton :
     c'est ce qui permet de dicter en japonais sans toucher au clavier. Le recognizer coupe seul
-    après 1–2 s de silence : une dictée enchaîne donc plusieurs sessions jusqu'au délai de silence
-    choisi dans les réglages (`state.silence`, 5 s par défaut). Hors Android, la page se rabat sur
-    la Web Speech API (`continuous` + même délai), puis sur le micro du clavier.
+    après ~1 s de silence : une dictée enchaîne donc plusieurs sessions, sur le même recognizer et
+    sans délai (sinon les mots dits pendant la relance sont perdus), jusqu'au délai de silence
+    choisi dans les réglages (`state.silence`, 5 s par défaut). Pas d'extras
+    `EXTRA_SPEECH_INPUT_*_SILENCE_LENGTH_MILLIS` : résultats imprévisibles. Chaque étape est
+    écrite dans le journal de dictée (Réglages > Dictée, événements `log`) pour le dépannage sur le
+    téléphone. Hors Android, la page se rabat sur la Web Speech API (`continuous` + même délai),
+    puis sur le micro du clavier.
+  - Phrase dictée pendant une traduction : sa carte est créée tout de suite et attend son tour
+    (`waiting` + `runNext`), jamais dans le champ. Pendant une dictée, la touche envoyer finit la
+    phrase (elle ne devient « stop » qu'en dehors d'une dictée, `syncSend`). Le texte tapé avant
+    une dictée revient ensuite, de son côté (`listening.draft`) ; les mots dictés restés dans le
+    champ ne sont jamais convertis en かな (`kanaKeep` : plages suivies à chaque modification).
+    Une phrase en cours de fin (« Un instant… ») arrive toujours, sauf effacement ou app en
+    arrière-plan. Une carte en attente l'indique ; « Réessayer » pendant une traduction attend
+    aussi son tour ; la touche stop arrête la traduction, la file et les photos en préparation.
+  - Minuteur : chaque fois que le délai de silence repart (début, mots entendus), un événement
+    `timer` fait se vider le contour du bouton micro (SVG `.ring`, `pathLength=100`) sur cette durée.
   - Clavier : petit bouton à côté de chaque micro. `KotobaWebView` donne la langue au clavier via
-    `EditorInfo.hintLocales` (Gboard la suit si elle est installée), relu après `restartInput`.
+    `EditorInfo.hintLocales`, relu après `restartInput`. Gboard la suit ; le clavier Samsung non.
+    900 ms après, l'app lit la langue réellement affichée (`getCurrentInputMethodSubtype`).
+    Mode « rōmaji → かな » (`state.kana`, Réglages > Clavier) pour ces claviers : avec le bouton
+    clavier 日本語, le rōmaji tapé devient des kana en direct (`toKana`, table `KANA`), le dernier
+    « n » devient ん à l'envoi. Il s'active seul quand le clavier reste en alphabet côté japonais.
+    Dans ce mode, `autocomplete` / `autocorrect` / `autocapitalize` = off et pas de correcteur :
+    sinon le clavier « corrige » le rōmaji en mots français.
   - Photos : `capture` → appli appareil photo via `FileProvider` (pas de permission CAMERA),
-    sinon sélecteur de photos. Voix : `TextToSpeech` (`Voice.java`).
+    sinon sélecteur de photos. Les photos HEIF (« haute efficacité » des Samsung) ou de plus de
+    8 Mo (50 et 200 Mpx du S23 Ultra) sont converties en JPEG d'environ 2048 px, à l'endroit
+    (`Photos.java`, `ImageDecoder`).
+  - Photos de travers : téléphone pointé vers le bas (machine à laver, table), l'appareil photo
+    enregistre souvent la photo de côté. Claude donne `turn` (ligne du titre : comment la photo est
+    tournée) et `r` par bloc (sens du texte, en degrés horaires ; absent = `turn`). La photo est
+    affichée tournée pour que son texte se lise à l'endroit, chaque traduction suit son texte, et
+    le bouton ↻ (fil et plein écran) tourne d'un quart à la main.
+  - Voix : `TextToSpeech` (`Voice.java`), femme ou homme (`state.voice`, Réglages > Voix).
+    Android ne donne pas le genre d'une voix : il est deviné par son nom (codes des voix Google,
+    `jac`/`jad`/`frb`/`frd` = homme). Sans voix d'homme installée, la voix par défaut est rendue
+    plus grave (`setPitch`). Hors Android : Web Speech, même principe.
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
+  - Pas de `backdrop-filter` sur les traductions des photos : sur un Samsung, elles se
+    décalaient de la photo quand on faisait défiler pendant la traduction (calques GPU).
+  - Taille du texte : la WebView suit la police système, plafonnée à 120 % (`setTextZoom`) ;
+    le CSS tient jusque-là à 320 px de large (le micro perd son icône avant de couper la langue).
 - Signature : `android/kotoba.keystore` (mot de passe dans `app/build.gradle`), versionné exprès
   pour que chaque build s'installe par-dessus le précédent sans perdre les données.
   `versionCode` = minutes depuis le 1er janvier 2026 : toujours croissant.
@@ -66,15 +102,33 @@ traduction mot à mot en français de son japonais (section `@@F`), affichée pa
 JA / FR au bout de la ligne rōmaji. La note `@@N` reste réservée aux nuances. Côté japonais : traduction du sens,
 avec le contexte de la conversation. Même modèle, même vitesse : tout est dans `textPrompt`.
 
+Conversation et favoris (voulu par Ronan) : la conversation affichée sert de contexte aux
+traductions ; les favoris sont à part et n'en servent jamais. La poubelle efface ce qui est
+affiché, toujours après confirmation : la conversation (ses favoris en sortent avec `out: true`
+mais restent dans les favoris) ou, depuis la vue ★, les favoris (ceux encore dans la conversation
+y restent, sans étoile). Mettre en favori : sans confirmation. Retirer un favori (« Gardé » dans la
+conversation, « Supprimer le favori » dans la vue ★) : confirmation dans la carte. Les cartes
+EXEMPLE ne s'affichent qu'avant la première traduction (`state.started`) ; la poubelle les retire.
+Tout re-rendu du fil (autre vue, nouvelle carte) ferme la confirmation de la poubelle et la fiche
+d'un bloc photo. Retour Android, dans l'ordre : fiche, plein écran, Montrer, Réglages, dictée,
+confirmation, question d'une carte, vue ★, puis l'app passe en arrière-plan.
+
+Persistance : chaque carte est enregistrée dès sa création ; une traduction coupée par un
+redémarrage devient « Traduction interrompue. » avec Réessayer (photos comprises, depuis la photo
+1000 px enregistrée). Mémoire pleine : les photos enregistrées sont retirées une à une, des plus
+anciennes aux favoris, puis les miniatures.
+
 Ce qui vient de l'artifact et doit rester : détection FR/JA, rōmaji et note de nuance
 (format `@@R` / `@@F` / `@@N`), Rapide / Soigné, Poli / Familier, Écouter, Copier, Montrer, Favoris,
-historique, photos « façon Google Lens » (une ligne JSON par bloc, `{"b":[x0,y0,x1,y1],"o":…,"t":…}`,
-coordonnées 0–1000), design (sceau 言葉, indigo 藍 + vermillon 朱, Zen Kaku Gothic New, clair/sombre).
+historique, photos « façon Google Lens » (une ligne JSON par bloc, `{"b":[x0,y0,x1,y1],"r":…,"o":…,"t":…}`,
+coordonnées 0–1000 sur la photo telle quelle), design (sceau 言葉, indigo 藍 + vermillon 朱, Zen Kaku Gothic New, clair/sombre).
 
 ## Tester
 
 - Interface : servir `web/` en local et la piloter avec Playwright, API simulée avec `page.route`
-  et un faux `window.KotobaAndroid` injecté par `addInitScript`.
+  et un faux `window.KotobaAndroid` injecté par `addInitScript`. Les bugs cachés viennent surtout
+  des enchaînements « action puis changement de vue / interruption » (★, Réglages, plein écran,
+  retour Android, redémarrage, dictée pendant une traduction) : les tester systématiquement.
 - APK : `cd android && ./gradlew assembleRelease lintRelease`. Pas d'émulateur dans les sessions
   cloud (pas de KVM) : micro, caméra et voix se testent sur le téléphone de Ronan.
 
