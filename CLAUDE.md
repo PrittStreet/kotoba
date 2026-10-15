@@ -50,6 +50,11 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
 - Signature : `android/kotoba.keystore` (mot de passe dans `app/build.gradle`), versionné exprès
   pour que chaque build s'installe par-dessus le précédent sans perdre les données.
   `versionCode` = minutes depuis le 1er janvier 2026 : toujours croissant.
+- APK « amis » avec clé intégrée : créer `android/kotoba-secrets.properties` (`apiKey=…`,
+  `workspace=…`, ignoré par git), compiler, envoyer l'APK à Ronan, puis supprimer le fichier et
+  `android/app/build`. La clé passe par `BuildConfig` et `Bridge.config()` ; la page l'utilise si
+  aucune clé n'est saisie et ne l'affiche jamais. Ne jamais la commiter : dépôt et Releases publics,
+  et Anthropic révoque toute clé publiée sur GitHub.
 - CI : `.github/workflows/apk.yml` construit + lint à chaque push, publie une Release `apk-N`
   (avec `kotoba.apk`) sur `main`. Lien stable : `releases/latest/download/kotoba.apk`.
 
