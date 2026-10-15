@@ -12,6 +12,8 @@
   const photoPickers = [[cameraBtn, $('#cameraInput')], [galleryBtn, $('#galleryInput')]];
   const favBtn = $('#favBtn'), clearBtn = $('#clearBtn'), setBtn = $('#setBtn'), confirmBar = $('#confirm'), romajiBtn = $('#romajiBtn');
   const micBtns = Array.from(document.querySelectorAll('[data-mic]'));
+  const kbdBtns = Array.from(document.querySelectorAll('[data-kbd]'));
+  const silenceInput = $('#silenceInput');
   const showEl = $('#show'), settingsEl = $('#settings');
   const keyInput = $('#keyInput'), wsInput = $('#wsInput'), keyStatus = $('#keyStatus');
   const lensView = $('#lensView'), lvScroll = $('#lvScroll'), lvWrap = $('#lvWrap'), lvOrig = $('#lvOrig');
@@ -30,8 +32,10 @@
     send: SV('<path d="M12 19V5M6 11l6-6 6 6"/>'),
     stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></svg>',
     close: SV('<path d="M6 6l12 12M18 6L6 18"/>'),
-    mic: SV('<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/>')
+    mic: SV('<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/>'),
+    kbd: SV('<rect x="2.5" y="6" width="19" height="12" rx="2.2"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M8 14.2h8"/>')
   };
+  kbdBtns.forEach((b) => { b.innerHTML = ICONS.kbd; });
   $('#lvClose').innerHTML = ICONS.close;
   favBtn.innerHTML = ICONS.star;
   clearBtn.innerHTML = ICONS.trash;
@@ -48,7 +52,8 @@
       tr: 'Excusez-moi, est-ce que ce train s’arrête à Shinjuku ?', ro: '', note: '', status: 'done' }
   ];
 
-  const state = { items: [], speaker: 'fr', tier: 'quick', polite: true, romaji: true, favOnly: false };
+  // silence: seconds of silence after which dictation ends (set in the settings)
+  const state = { items: [], speaker: 'fr', tier: 'quick', polite: true, romaji: true, silence: 5, favOnly: false };
   const files = new Map();      // id -> image blob sent to Claude (this session only)
   const photoUrls = new Map();  // id -> sharp object URL of that image (this session only)
   let busy = false, ctl = null, keyProblem = '', memKey = '', memWs = '';
@@ -69,6 +74,7 @@
       if (d.tier === 'quick' || d.tier === 'careful') state.tier = d.tier;
       if (typeof d.polite === 'boolean') state.polite = d.polite;
       if (typeof d.romaji === 'boolean') state.romaji = d.romaji;
+      if (typeof d.silence === 'number' && d.silence >= 1 && d.silence <= 15) state.silence = d.silence;
     } catch (e) { /* storage unavailable */ }
   }
   // Photos are heavy: if storage is full, keep only the most recent ones, then none.
@@ -81,7 +87,7 @@
     ];
     for (const lv of levels) {
       try {
-        const data = { items: state.items.map(lv), speaker: state.speaker, tier: state.tier, polite: state.polite, romaji: state.romaji };
+        const data = { items: state.items.map(lv), speaker: state.speaker, tier: state.tier, polite: state.polite, romaji: state.romaji, silence: state.silence };
         localStorage.setItem(KEY, JSON.stringify(data));
         return;
       } catch (e) { /* try a lighter copy */ }
@@ -653,7 +659,7 @@
     thread.textContent = '';
     if (!state.items.length && !state.favOnly) {
       thread.append(el('p', 'intro', stt
-        ? 'Touche « Parler français » ou « 日本語で話す » et parle : la traduction arrive toute seule à la fin de la phrase. Tu peux aussi écrire, ou prendre en photo un menu ou un panneau.'
+        ? 'Touche le micro « Français » ou « 日本語 » et parle : la traduction arrive toute seule à la fin de la phrase. Le petit bouton clavier à côté sert à écrire dans cette langue. Tu peux aussi prendre en photo un menu ou un panneau.'
         : 'Écris ou dicte une phrase, ou prends en photo un menu ou un panneau : la traduction s’affiche directement sur l’image. Le japonais est reconnu tout seul.'));
       EXAMPLES.forEach((x) => thread.append(buildCard(x, true)));
       return;
@@ -680,6 +686,7 @@
     favBtn.setAttribute('aria-pressed', String(state.favOnly));
     ta.lang = state.speaker;
     sendBtn.classList.toggle('ja', state.speaker === 'ja');
+    syncKeyboardLang();
     syncMic();
   }
   function autosize() {
@@ -717,7 +724,7 @@
     try {
       if (NATIVE && NATIVE.canListen()) {
         return {
-          start: (lang) => NATIVE.startListening(lang),
+          start: (lang, silenceMs) => NATIVE.startListening(lang, silenceMs),
           stop: () => NATIVE.stopListening(),
           cancel: () => NATIVE.cancelListening()
         };
@@ -727,20 +734,23 @@
     if (!SR) return null;
     let rec = null;
     return {
-      start(lang) {
+      start(lang, silenceMs) {
         const r = new SR();
         rec = r;
-        let finals = '', interim = '', failed = false;
+        let finals = '', interim = '', failed = false, timer = 0;
+        // Keep listening through pauses; stop after silenceMs without new words.
+        const arm = () => { clearTimeout(timer); timer = setTimeout(() => { if (rec === r) r.stop(); }, silenceMs); };
         r.lang = lang;
         r.interimResults = true;
-        r.continuous = false;
+        r.continuous = true;
         r.maxAlternatives = 1;
-        r.onstart = () => { if (rec === r) onSpeech({ type: 'ready' }); };
+        r.onstart = () => { if (rec === r) { arm(); onSpeech({ type: 'ready' }); } };
         r.onresult = (e) => {
           finals = ''; interim = '';
           for (let i = 0; i < e.results.length; i++) {
             if (e.results[i].isFinal) finals += e.results[i][0].transcript; else interim += e.results[i][0].transcript;
           }
+          arm();
           if (rec === r) onSpeech({ type: 'partial', text: finals + interim });
         };
         r.onerror = (e) => {
@@ -749,7 +759,11 @@
           failed = true;
           onSpeech({ type: 'error', code: e.error });
         };
-        r.onend = () => { if (rec === r && !failed) onSpeech({ type: 'final', text: finals || interim }); rec = rec === r ? null : rec; };
+        r.onend = () => {
+          clearTimeout(timer);
+          if (rec === r && !failed) onSpeech({ type: 'final', text: finals || interim });
+          rec = rec === r ? null : rec;
+        };
         r.start();
       },
       stop() { if (rec) rec.stop(); },
@@ -757,15 +771,16 @@
     };
   })();
 
-  const MIC_IDLE = { fr: 'Parler français', ja: '日本語で話す' };
-  const MIC_ON = { fr: 'J’écoute…', ja: '聞いています…' };
+  const MIC_IDLE = { fr: 'Français', ja: '日本語' };
+  const MIC_NAME = { fr: 'Parler français', ja: '日本語で話す' };
+  const MIC_ON = { fr: 'J’écoute…', ja: 'どうぞ…' };
   function syncMic() {
     micBtns.forEach((b) => {
       const lang = b.dataset.mic;
       const on = !!listening && listening.lang === lang;
       b.classList.toggle('listening', on);
       b.setAttribute('aria-pressed', String(on));
-      b.setAttribute('aria-label', on ? (lang === 'ja' ? '聞き取りを終える' : 'Arrêter l’écoute') : MIC_IDLE[lang]);
+      b.setAttribute('aria-label', on ? (lang === 'ja' ? '聞き取りを終える' : 'Arrêter l’écoute') : MIC_NAME[lang]);
       b.querySelector('.ico').innerHTML = on ? ICONS.stop : ICONS.mic;
       b.querySelector('.lbl').textContent = on ? MIC_ON[lang] : MIC_IDLE[lang];
     });
@@ -774,12 +789,31 @@
       ? (listening.lang === 'ja' ? '話してください…' : 'Parle, la phrase s’affiche ici…')
       : (state.speaker === 'ja' ? 'ここに入力' : 'Écris ici');
   }
-  // Without speech recognition, point at the keyboard's own microphone key.
-  function keyboardDictation(lang) {
+  // In the Android app, the keyboard opens in the language of the key (Gboard follows the hint).
+  let hintLang = '';
+  function syncKeyboardLang() {
+    if (!NATIVE || hintLang === state.speaker) return;
+    hintLang = state.speaker;
+    try { NATIVE.keyboard(state.speaker, false); } catch (e) {}
+  }
+  // Small keyboard key next to each microphone: type in that language.
+  function openKeyboard(lang) {
+    cancelListening();
     const changed = state.speaker !== lang;
-    state.speaker = lang; syncPrefs(); save();
+    state.speaker = lang;
+    if (NATIVE) hintLang = lang; // set below, together with opening the keyboard
+    syncPrefs(); save();
+    if (NATIVE) {
+      ta.focus();
+      try { NATIVE.keyboard(lang, true); } catch (e) {}
+      return;
+    }
     if (changed && document.activeElement === ta) ta.blur();
     setTimeout(() => ta.focus(), changed ? 80 : 0);
+  }
+  // Without speech recognition, point at the keyboard's own microphone key.
+  function keyboardDictation(lang) {
+    openKeyboard(lang);
     toast(lang === 'ja' ? 'キーボードのマイクをタップして話してください' : 'Touche le micro de ton clavier et parle');
   }
   function toggleMic(lang) {
@@ -796,7 +830,7 @@
     ta.value = '';
     autosize();
     syncPrefs(); save();
-    try { stt.start(lang === 'ja' ? 'ja-JP' : 'fr-FR'); }
+    try { stt.start(lang === 'ja' ? 'ja-JP' : 'fr-FR', Math.round(state.silence * 1000)); }
     catch (e) { listening = null; syncMic(); toast('La dictée n’a pas pu démarrer.'); }
   }
   function cancelListening() {
@@ -946,6 +980,13 @@
   ta.addEventListener('input', autosize);
 
   micBtns.forEach((b) => b.addEventListener('click', () => toggleMic(b.dataset.mic)));
+  kbdBtns.forEach((b) => {
+    // Same language while typing: keep the keyboard open.
+    b.addEventListener('pointerdown', (e) => {
+      if (document.activeElement === ta && b.dataset.kbd === state.speaker) e.preventDefault();
+    });
+    b.addEventListener('click', () => openKeyboard(b.dataset.kbd));
+  });
   document.querySelectorAll('[data-pref]').forEach((b) => b.addEventListener('click', () => {
     if (b.dataset.pref === 'tier') state.tier = b.dataset.val; else state.polite = b.dataset.val === '1';
     syncPrefs(); save();
@@ -1033,8 +1074,13 @@
     const since = new Date(u.since).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
     $('#usageText').textContent = 'Environ ' + money + ' depuis le ' + since + ' (' + u.n + ' traduction' + (u.n > 1 ? 's' : '') + '). Estimation : le montant exact est sur platform.claude.com.';
   }
+  function syncSilence() {
+    silenceInput.value = String(state.silence);
+    $('#silenceOut').textContent = String(state.silence).replace('.', ',') + ' s';
+  }
   function openSettings(msg) {
     cancelListening();
+    syncSilence();
     keyInput.value = getKey();
     wsInput.value = getWorkspace();
     keyInput.type = 'password';
@@ -1089,6 +1135,10 @@
     keyProblem = '';
     syncBanner();
     setKeyStatus('Clé supprimée de ce téléphone.');
+  });
+  silenceInput.addEventListener('input', () => {
+    const v = Number(silenceInput.value);
+    if (v >= 1 && v <= 15) { state.silence = v; syncSilence(); save(); }
   });
   $('#usageReset').addEventListener('click', () => {
     try { localStorage.removeItem(KEY_USAGE); } catch (e) {}

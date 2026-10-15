@@ -15,6 +15,7 @@ import android.os.Bundle;
 import android.provider.MediaStore;
 import android.speech.SpeechRecognizer;
 import android.view.ViewGroup;
+import android.view.inputmethod.InputMethodManager;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -40,6 +41,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Locale;
 
 /**
  * Kotoba: the web app from /web shown full screen, plus what a web page can't do well on Android:
@@ -51,7 +53,7 @@ public class MainActivity extends Activity {
     private static final int REQ_FILES = 1;
     private static final int REQ_MIC = 2;
 
-    private WebView web;
+    private KotobaWebView web;
     private WebViewAssetLoader assets;
     SpeechInput speech;
     Voice voice;
@@ -64,6 +66,7 @@ public class MainActivity extends Activity {
     private File pendingPhoto;
     private Uri pendingPhotoUri;
     private String pendingLang;
+    private int pendingSilenceMs;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,7 +78,7 @@ public class MainActivity extends Activity {
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(getColor(R.color.paper));
-        web = new WebView(this);
+        web = new KotobaWebView(this);
         web.setBackgroundColor(getColor(R.color.paper));
         root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
@@ -164,14 +167,15 @@ public class MainActivity extends Activity {
 
     // ---------- microphone ----------
 
-    void listen(String lang) {
+    void listen(String lang, int silenceMs) {
         voice.stop();
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             pendingLang = lang;
+            pendingSilenceMs = silenceMs;
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MIC);
             return;
         }
-        speech.start(lang);
+        speech.start(lang, silenceMs);
     }
 
     @Override
@@ -180,7 +184,7 @@ public class MainActivity extends Activity {
         String lang = pendingLang;
         pendingLang = null;
         if (lang == null) return;
-        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) speech.start(lang);
+        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) speech.start(lang, pendingSilenceMs);
         else emitSpeech("error", null, "not-allowed");
     }
 
@@ -195,6 +199,20 @@ public class MainActivity extends Activity {
             return;
         }
         web.evaluateJavascript("window.kotobaNative && kotobaNative.speech(" + ev + ")", null);
+    }
+
+    // ---------- keyboard ----------
+
+    /** lang: "fr" or "ja". The keyboard opens in that language (if installed); show: open it now. */
+    void keyboard(String lang, boolean show) {
+        web.setKeyboardLanguage("ja".equals(lang) ? Locale.JAPAN : Locale.FRANCE);
+        InputMethodManager imm = getSystemService(InputMethodManager.class);
+        if (imm == null) return;
+        imm.restartInput(web); // the keyboard reconnects and reads the new language
+        if (show) {
+            web.requestFocus();
+            imm.showSoftInput(web, InputMethodManager.SHOW_IMPLICIT);
+        }
     }
 
     // ---------- photos: camera app or photo picker ----------

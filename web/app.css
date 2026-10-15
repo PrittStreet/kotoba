@@ -109,8 +109,13 @@ a{color:var(--ai)}
 .banner{display:flex;align-items:center;gap:10px;font-size:.86rem;padding:8px 8px 8px 12px;border-radius:12px;background:var(--shu-soft);color:var(--ink)}
 .banner span{flex:1;min-width:0}
 .speakers{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.spk{--accent:var(--ai);--accent-soft:var(--ai-soft);--on-accent:var(--on-ai);border:1.5px solid var(--accent);border-radius:14px;padding:12px 8px;font-size:.95rem;font-weight:500;color:var(--accent);background:var(--accent-soft);display:flex;align-items:center;justify-content:center;gap:8px;min-width:0;white-space:nowrap;overflow:hidden}
-.spk.ja{--accent:var(--shu);--accent-soft:var(--shu-soft);--on-accent:var(--on-shu)}
+/* each language: a wide microphone key and a small keyboard key */
+.spk-pair{--accent:var(--ai);--accent-soft:var(--ai-soft);--on-accent:var(--on-ai);display:flex;gap:5px;min-width:0}
+.spk-pair.ja{--accent:var(--shu);--accent-soft:var(--shu-soft);--on-accent:var(--on-shu)}
+.spk{flex:1;border:1.5px solid var(--accent);border-radius:14px;padding:12px 8px;font-size:.98rem;font-weight:500;color:var(--accent);background:var(--accent-soft);display:flex;align-items:center;justify-content:center;gap:8px;min-width:0;white-space:nowrap;overflow:hidden}
+.kbd{flex:none;width:44px;border:1.5px solid var(--accent);border-radius:14px;color:var(--accent);background:var(--surface);display:grid;place-items:center}
+.kbd svg{width:21px;height:21px}
+.kbd:active{background:var(--accent-soft)}
 .spk .lbl{overflow:hidden;text-overflow:ellipsis}
 .spk svg{flex:none;width:20px;height:20px}
 .spk.listening{background:var(--accent);color:var(--on-accent);animation:listen 1.3s ease-out infinite}
@@ -158,6 +163,9 @@ a{color:var(--ai)}
 .ws-input:focus{outline:none;border-color:var(--ai)}
 .set-acts{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 .key-status{margin:0;font-size:.9rem;min-height:1.35em}
+.range-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:.92rem}
+.range-row output{flex:none;font-weight:700;color:var(--ai);font-variant-numeric:tabular-nums}
+.range{width:100%;accent-color:var(--ai);margin:0}
 .key-status.ok{color:var(--ai)}
 .key-status.bad{color:var(--danger)}
 .steps{margin:0;padding-left:1.3em;font-size:.88rem;display:flex;flex-direction:column;gap:4px}
