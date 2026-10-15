@@ -64,10 +64,12 @@
 
   // silence: seconds of silence after which dictation ends (set in the settings)
   // voice: 'female' | 'male' for "Écouter"; kana: rōmaji typed on the Japanese side becomes hiragana
-  const state = { items: [], speaker: 'fr', tier: 'quick', polite: true, romaji: true, silence: 5, voice: 'female', kana: false, favOnly: false };
+  // started: the examples are only shown before the first translation (then they look like messages)
+  const state = { items: [], speaker: 'fr', tier: 'quick', polite: true, romaji: true, silence: 5, voice: 'female', kana: false, started: false, favOnly: false };
   const files = new Map();      // id -> image blob sent to Claude (this session only)
   const photoUrls = new Map();  // id -> sharp object URL of that image (this session only)
   let busy = false, ctl = null, keyProblem = '', memKey = '', memWs = '';
+  let unfavAsk = ''; // id of the card asking whether to remove its favourite
   let runStartedAt = 0;
   let listening = null;         // { lang: 'fr' | 'ja', text } while the microphone is on
   let queuedSrc = null;         // language of a dictated sentence waiting for the current translation
@@ -89,6 +91,7 @@
       if (typeof d.silence === 'number' && d.silence >= 1 && d.silence <= 15) state.silence = d.silence;
       if (d.voice === 'male' || d.voice === 'female') state.voice = d.voice;
       if (typeof d.kana === 'boolean') state.kana = d.kana;
+      state.started = d.started === true || state.items.length > 0 || loadUsage().n > 0;
     } catch (e) { /* storage unavailable */ }
   }
   // Photos are heavy: if storage is full, keep only the most recent ones, then none.
@@ -101,7 +104,7 @@
     ];
     for (const lv of levels) {
       try {
-        const data = { items: state.items.map(lv), speaker: state.speaker, tier: state.tier, polite: state.polite, romaji: state.romaji, silence: state.silence, voice: state.voice, kana: state.kana };
+        const data = { items: state.items.map(lv), speaker: state.speaker, tier: state.tier, polite: state.polite, romaji: state.romaji, silence: state.silence, voice: state.voice, kana: state.kana, started: state.started };
         localStorage.setItem(KEY, JSON.stringify(data));
         return;
       } catch (e) { /* try a lighter copy */ }
@@ -632,8 +635,18 @@
       if (it.kind === 'text' && tts) a.append(actBtn('speak', 'Écouter'));
       a.append(actBtn('copy', 'Copier'));
       if (it.kind === 'text') a.append(actBtn('show', 'Montrer'));
-      a.append(actBtn('fav', it.fav ? 'Gardé' : 'Garder', it.fav));
+      a.append(actBtn('fav', state.favOnly ? 'Supprimer le favori' : (it.fav ? 'Gardé' : 'Garder'), it.fav));
       c.append(a);
+      if (unfavAsk === it.id && it.fav) {
+        const q = el('div', 'ask');
+        q.append(el('span', null, it.out ? 'Supprimer ce favori ? Il n’est plus dans la conversation : il sera effacé.' : 'Supprimer ce favori ? Le message reste dans la conversation.'));
+        const no = el('button', 'txt-btn', 'Annuler');
+        no.type = 'button'; no.dataset.act = 'unfav-no';
+        const yes = el('button', 'txt-btn danger', 'Supprimer');
+        yes.type = 'button'; yes.dataset.act = 'unfav-yes';
+        q.append(no, yes);
+        c.append(q);
+      }
     }
     return c;
   }
@@ -765,12 +778,13 @@
   }
   function render() {
     thread.textContent = '';
+    unfavAsk = '';
     const conv = convItems();
     if (!conv.length && !state.favOnly) {
       thread.append(el('p', 'intro', stt
         ? 'Touche le micro « Français » ou « 日本語 » et parle : la traduction arrive toute seule à la fin de la phrase. Le petit bouton clavier à côté sert à écrire dans cette langue. Tu peux aussi prendre en photo un menu ou un panneau.'
         : 'Écris ou dicte une phrase, ou prends en photo un menu ou un panneau : la traduction s’affiche directement sur l’image. Le japonais est reconnu tout seul.'));
-      EXAMPLES.forEach((x) => thread.append(buildCard(x, true)));
+      if (!state.started) EXAMPLES.forEach((x) => thread.append(buildCard(x, true)));
       return;
     }
     const list = state.favOnly ? state.items.filter((i) => i.fav) : conv;
@@ -1117,6 +1131,7 @@
   // ---------- actions ----------
   function addItem(it) {
     const reRender = !state.items.some(inConv) || state.favOnly;
+    state.started = true;
     state.items.push(it);
     trimItems();
     if (state.favOnly) { state.favOnly = false; syncPrefs(); }
@@ -1192,12 +1207,23 @@
     else if (act === 'turn') turnPhoto(it);
     else if (act === 'view') { it.view = b.dataset.view; save(); updateCard(it); }
     else if (act === 'fav') {
-      it.fav = !it.fav;
-      // No longer a favourite, and already cleared from the conversation: nowhere left to show it.
-      if (!it.fav && it.out) { forgetPhoto(it.id); state.items.splice(state.items.indexOf(it), 1); }
+      if (!it.fav) { it.fav = true; save(); updateCard(it); toast('Gardé dans les favoris'); return; }
+      // removing a favourite asks first, in the card
+      const prev = unfavAsk && unfavAsk !== it.id ? state.items.find((i) => i.id === unfavAsk) : null;
+      unfavAsk = unfavAsk === it.id ? '' : it.id;
+      if (prev) updateCard(prev);
+      updateCard(it);
+    } else if (act === 'unfav-no') {
+      unfavAsk = '';
+      updateCard(it);
+    } else if (act === 'unfav-yes') {
+      unfavAsk = '';
+      it.fav = false;
+      // already cleared from the conversation: nowhere left to show it
+      if (it.out) { forgetPhoto(it.id); state.items.splice(state.items.indexOf(it), 1); }
       save();
-      if (state.favOnly && !it.fav) render(); else updateCard(it);
-      toast(it.fav ? 'Gardé dans les favoris' : 'Retiré des favoris');
+      if (state.favOnly || it.out) render(); else updateCard(it);
+      toast('Favori supprimé');
     } else if (act === 'retry') {
       if (busy) { toast('Une traduction est déjà en cours.'); return; }
       if (!getKey()) { openSettings('Ajoute d’abord ta clé API Claude.'); return; }
@@ -1243,6 +1269,8 @@
     if (!confirmBar.hidden) { confirmBar.hidden = true; return; }
     const favs = state.favOnly;
     if (favs ? !state.items.some((i) => i.fav) : !state.items.some(inConv)) {
+      // only the examples on screen: they go, they are not messages
+      if (!favs && !state.started) { state.started = true; save(); render(); toast('Exemples effacés'); return; }
       toast(favs ? 'Aucun favori à effacer.' : 'La conversation est déjà vide.');
       return;
     }

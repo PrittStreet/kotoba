@@ -98,7 +98,9 @@ Conversation et favoris (voulu par Ronan) : la conversation affichée sert de co
 traductions ; les favoris sont à part et n'en servent jamais. La poubelle efface ce qui est
 affiché, toujours après confirmation : la conversation (ses favoris en sortent avec `out: true`
 mais restent dans les favoris) ou, depuis la vue ★, les favoris (ceux encore dans la conversation
-y restent, sans étoile).
+y restent, sans étoile). Mettre en favori : sans confirmation. Retirer un favori (« Gardé » dans la
+conversation, « Supprimer le favori » dans la vue ★) : confirmation dans la carte. Les cartes
+EXEMPLE ne s'affichent qu'avant la première traduction (`state.started`) ; la poubelle les retire.
 
 Ce qui vient de l'artifact et doit rester : détection FR/JA, rōmaji et note de nuance
 (format `@@R` / `@@F` / `@@N`), Rapide / Soigné, Poli / Familier, Écouter, Copier, Montrer, Favoris,
