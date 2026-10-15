@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Same colours as web/app.css -->
+    <color name="paper">#F2F3F8</color>
+    <color name="shu">#BD3F2A</color>
+    <color name="icon_bg">#BD3F2A</color>
+</resources>
