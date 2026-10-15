@@ -122,6 +122,29 @@
       </details>
     </section>
     <section class="set-block">
+      <h3>Voix</h3>
+      <div class="set-row">
+        <span>Voix pour « Écouter »</span>
+        <div class="seg" role="group" aria-label="Voix">
+          <button type="button" data-voice="female">Femme</button>
+          <button type="button" data-voice="male">Homme</button>
+        </div>
+      </div>
+      <div class="set-acts">
+        <button id="tryFr" class="txt-btn" type="button">Écouter en français</button>
+        <button id="tryJa" class="txt-btn" type="button" lang="ja">日本語で聞く</button>
+      </div>
+      <p id="voiceInfo" class="hint"></p>
+    </section>
+    <section class="set-block">
+      <h3>Clavier</h3>
+      <div class="set-row">
+        <label for="kanaInput">Japonais tapé en rōmaji → かな</label>
+        <input id="kanaInput" class="switch" type="checkbox">
+      </div>
+      <p class="hint">Pour les claviers qui ne passent pas en japonais tout seuls, comme celui de Samsung : avec le bouton clavier 日本語, on tape « arigatou » et Kotoba écrit ありがとう. Il s’active tout seul quand le clavier reste en alphabet.</p>
+    </section>
+    <section class="set-block">
       <h3>Consommation</h3>
       <p id="usageText" class="hint"></p>
       <div class="set-acts"><button id="usageReset" class="txt-btn" type="button">Remettre à zéro</button></div>

@@ -33,8 +33,8 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
   `WebViewAssetLoader` sur `https://appassets.androidplatform.net/assets/index.html`.
   - Pont JS `window.KotobaAndroid` (`Bridge.java`) : `canListen`,
     `startListening("fr-FR"|"ja-JP", silenceMs)`, `stopListening`, `cancelListening`,
-    `keyboard("fr"|"ja", show)`, `speak(text, "fr"|"ja")`, `stopSpeaking`, `copy`, `insets`,
-    `darkBars`, `config`, `version`. Retours vers la page : `kotobaNative.speech({type, text, code})`
+    `keyboard("fr"|"ja", show)`, `speak(text, "fr"|"ja")`, `stopSpeaking`, `voice("female"|"male")`,
+    `voices`, `copy`, `insets`, `darkBars`, `config`, `version`. Retours vers la page : `kotobaNative.speech({type, text, code})`
     (`ready`, `partial`, `final`, `error`, `log`, `timer` avec `ms`), `kotobaNative.keyboard({wanted,
     actual, ime})`, `kotobaInsets(top, bottom)`, `kotobaBack()`.
   - Micro : `SpeechRecognizer` d'Android (`SpeechInput.java`), langue imposée par le bouton :
@@ -50,10 +50,16 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     `timer` fait se vider le contour du bouton micro (SVG `.ring`, `pathLength=100`) sur cette durée.
   - Clavier : petit bouton à côté de chaque micro. `KotobaWebView` donne la langue au clavier via
     `EditorInfo.hintLocales`, relu après `restartInput`. Gboard la suit ; le clavier Samsung non.
-    900 ms après, l'app lit la langue réellement affichée (`getCurrentInputMethodSubtype`) et la
-    page explique une fois comment changer (🌐 / barre d'espace, ou installer Gboard).
+    900 ms après, l'app lit la langue réellement affichée (`getCurrentInputMethodSubtype`).
+    Mode « rōmaji → かな » (`state.kana`, Réglages > Clavier) pour ces claviers : avec le bouton
+    clavier 日本語, le rōmaji tapé devient des kana en direct (`toKana`, table `KANA`), le dernier
+    « n » devient ん à l'envoi. Il s'active seul quand le clavier reste en alphabet côté japonais.
   - Photos : `capture` → appli appareil photo via `FileProvider` (pas de permission CAMERA),
-    sinon sélecteur de photos. Voix : `TextToSpeech` (`Voice.java`).
+    sinon sélecteur de photos.
+  - Voix : `TextToSpeech` (`Voice.java`), femme ou homme (`state.voice`, Réglages > Voix).
+    Android ne donne pas le genre d'une voix : il est deviné par son nom (codes des voix Google,
+    `jac`/`jad`/`frb`/`frd` = homme). Sans voix d'homme installée, la voix par défaut est rendue
+    plus grave (`setPitch`). Hors Android : Web Speech, même principe.
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
 - Signature : `android/kotoba.keystore` (mot de passe dans `app/build.gradle`), versionné exprès

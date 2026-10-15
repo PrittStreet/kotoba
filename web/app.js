@@ -61,7 +61,8 @@
   ];
 
   // silence: seconds of silence after which dictation ends (set in the settings)
-  const state = { items: [], speaker: 'fr', tier: 'quick', polite: true, romaji: true, silence: 5, favOnly: false };
+  // voice: 'female' | 'male' for "Écouter"; kana: rōmaji typed on the Japanese side becomes hiragana
+  const state = { items: [], speaker: 'fr', tier: 'quick', polite: true, romaji: true, silence: 5, voice: 'female', kana: false, favOnly: false };
   const files = new Map();      // id -> image blob sent to Claude (this session only)
   const photoUrls = new Map();  // id -> sharp object URL of that image (this session only)
   let busy = false, ctl = null, keyProblem = '', memKey = '', memWs = '';
@@ -84,6 +85,8 @@
       if (typeof d.polite === 'boolean') state.polite = d.polite;
       if (typeof d.romaji === 'boolean') state.romaji = d.romaji;
       if (typeof d.silence === 'number' && d.silence >= 1 && d.silence <= 15) state.silence = d.silence;
+      if (d.voice === 'male' || d.voice === 'female') state.voice = d.voice;
+      if (typeof d.kana === 'boolean') state.kana = d.kana;
     } catch (e) { /* storage unavailable */ }
   }
   // Photos are heavy: if storage is full, keep only the most recent ones, then none.
@@ -96,7 +99,7 @@
     ];
     for (const lv of levels) {
       try {
-        const data = { items: state.items.map(lv), speaker: state.speaker, tier: state.tier, polite: state.polite, romaji: state.romaji, silence: state.silence };
+        const data = { items: state.items.map(lv), speaker: state.speaker, tier: state.tier, polite: state.polite, romaji: state.romaji, silence: state.silence, voice: state.voice, kana: state.kana };
         localStorage.setItem(KEY, JSON.stringify(data));
         return;
       } catch (e) { /* try a lighter copy */ }
@@ -769,6 +772,7 @@
       const v = voices.find((x) => (x.lang || '').toLowerCase().replace('_', '-').startsWith(lang));
       if (v) u.voice = v;
       u.rate = lang === 'ja' ? 0.92 : 1;
+      if (state.voice === 'male') u.pitch = 0.75;
       window.speechSynthesis.speak(u);
     } catch (e) { toast('Lecture audio indisponible ici.'); }
   }
@@ -852,7 +856,7 @@
     ta.readOnly = !!listening;
     ta.placeholder = listening
       ? (listening.lang === 'ja' ? '話してください…' : 'Parle…')
-      : (state.speaker === 'ja' ? 'ここに入力' : 'Écris ici');
+      : (state.speaker === 'ja' ? (state.kana ? 'ローマ字で入力 → かな' : 'ここに入力') : 'Écris ici');
   }
   // In the Android app, the keyboard opens in the language of the key (Gboard follows the hint).
   let hintLang = '';
@@ -985,10 +989,70 @@
     logSpeech('clavier : voulu ' + ev.wanted + ', affiché ' + (shown || '?') + ' (' + (ev.ime || '?') + ')');
     if (shown.startsWith(ev.wanted) || kbdTold[ev.wanted] || document.activeElement !== ta) return;
     kbdTold[ev.wanted] = true;
-    const lang = ev.wanted === 'ja' ? 'japonais' : 'français';
-    toast(/samsung|com\.sec\./i.test(ev.ime || '')
-      ? 'Le clavier Samsung ne change pas de langue tout seul : touche 🌐 ou glisse la barre d’espace pour passer en ' + lang + '. Avec le clavier Gboard, Kotoba le fait pour toi.'
-      : 'Le clavier n’est pas passé en ' + lang + ' : touche 🌐 sur le clavier pour changer de langue.', 7000);
+    const samsung = /samsung|com\.sec\./i.test(ev.ime || '');
+    if (ev.wanted === 'ja') {
+      // Language unknown on another keyboard: only advise.
+      if (!shown && !samsung) {
+        toast('Le clavier n’est peut-être pas en japonais : touche 🌐, ou active « rōmaji → かな » dans Réglages > Clavier.', 7000);
+        return;
+      }
+      // The keyboard stays in the alphabet: Kotoba writes the kana itself.
+      if (!state.kana) { state.kana = true; save(); syncMic(); }
+      toast((samsung ? 'Le clavier Samsung reste en alphabet' : 'Le clavier reste en alphabet') + ' : tape le japonais en rōmaji, Kotoba l’écrit en かな (arigatou → ありがとう). Ou touche 🌐 pour son clavier japonais.', 8000);
+      return;
+    }
+    toast((samsung ? 'Le clavier Samsung ne change pas de langue tout seul' : 'Le clavier n’est pas passé en français') + ' : touche 🌐 ou glisse la barre d’espace pour passer en français.', 7000);
+  }
+
+  // ---------- rōmaji → hiragana, for keyboards that stay in the alphabet ----------
+  const KANA = (() => {
+    const t = { a: 'あ', i: 'い', u: 'う', e: 'え', o: 'お' };
+    const rows = { k: 'かきくけこ', s: 'さしすせそ', t: 'たちつてと', n: 'なにぬねの', h: 'はひふへほ', m: 'まみむめも',
+      r: 'らりるれろ', l: 'らりるれろ', g: 'がぎぐげご', z: 'ざじずぜぞ', d: 'だぢづでど', b: 'ばびぶべぼ', p: 'ぱぴぷぺぽ' };
+    for (const c in rows) 'aiueo'.split('').forEach((v, k) => { t[c + v] = rows[c][k]; });
+    Object.assign(t, {
+      ya: 'や', yu: 'ゆ', yo: 'よ', wa: 'わ', wo: 'を', wi: 'うぃ', we: 'うぇ', vu: 'ゔ',
+      shi: 'し', chi: 'ち', tsu: 'つ', fu: 'ふ', ji: 'じ', fa: 'ふぁ', fi: 'ふぃ', fe: 'ふぇ', fo: 'ふぉ',
+      she: 'しぇ', che: 'ちぇ', je: 'じぇ', ti: 'ち', tu: 'つ',
+      xa: 'ぁ', xi: 'ぃ', xu: 'ぅ', xe: 'ぇ', xo: 'ぉ', xya: 'ゃ', xyu: 'ゅ', xyo: 'ょ', xtu: 'っ', xtsu: 'っ',
+      '-': 'ー', ',': '、', '.': '。', '?': '？', '!': '！'
+    });
+    const ki = { k: 'き', g: 'ぎ', n: 'に', h: 'ひ', m: 'み', r: 'り', b: 'び', p: 'ぴ', s: 'し', z: 'じ', t: 'ち', c: 'ち', d: 'ぢ', j: 'じ' };
+    const small = { a: 'ゃ', u: 'ゅ', o: 'ょ' };
+    for (const c in ki) for (const v in small) t[c + 'y' + v] = ki[c] + small[v];
+    for (const v in small) { t['sh' + v] = 'し' + small[v]; t['ch' + v] = 'ち' + small[v]; t['j' + v] = 'じ' + small[v]; }
+    return t;
+  })();
+  const isVowel = (c) => !!c && 'aiueo'.includes(c);
+  // final: the text is complete, so a last "n" becomes ん (while typing it may still become な…).
+  function toKana(src, final) {
+    const s = src.toLowerCase();
+    let out = '', i = 0;
+    while (i < s.length) {
+      const c = s[i], n1 = s[i + 1] || '', n2 = s[i + 2] || '';
+      if (c === 'n' && !isVowel(n1) && n1 !== 'y') {
+        if (n1 === "'") { out += 'ん'; i += 2; continue; }
+        if (n1 === 'n' && !isVowel(n2) && n2 !== 'y') { out += 'ん'; i += 2; continue; }
+        if (!n1 && !final) { out += src[i]; i += 1; continue; }
+        out += 'ん'; i += 1; continue;
+      }
+      if (c === n1 && 'bcdfghjklmpqrstvwxz'.includes(c)) { out += 'っ'; i += 1; continue; }
+      if (c === 't' && n1 === 'c' && n2 === 'h') { out += 'っ'; i += 1; continue; }
+      let len = 4;
+      while (len > 0 && !KANA[s.substr(i, len)]) len--;
+      if (len) { out += KANA[s.substr(i, len)]; i += len; } else { out += src[i]; i += 1; }
+    }
+    return out;
+  }
+  const kanaTyping = () => state.kana && state.speaker === 'ja' && !listening;
+  // Convert as they type, unless the keyboard is still composing a word or the cursor is elsewhere.
+  function liveKana() {
+    if (!kanaTyping() || !/[a-z]/i.test(ta.value) || ta.selectionStart !== ta.value.length) return;
+    const k = toKana(ta.value, false);
+    if (k === ta.value) return;
+    ta.value = k;
+    ta.setSelectionRange(k.length, k.length);
+    autosize();
   }
   window.kotobaNative = { speech: onSpeech, keyboard: onKeyboard };
 
@@ -1003,7 +1067,8 @@
   // forcedSrc: the language of the microphone key, when the text was dictated.
   function submit(forcedSrc, spoken) {
     if (busy) return;
-    const text = ta.value.trim();
+    const typed = ta.value.trim();
+    const text = !spoken && kanaTyping() ? toKana(typed, true) : typed;
     if (!text) { ta.focus(); return; }
     if (!getKey()) { syncBanner(); openSettings('Ajoute d’abord ta clé API Claude.'); return; }
     const src = forcedSrc || detectSrc(text);
@@ -1094,7 +1159,8 @@
       if (!busy && !listening) submit();
     }
   });
-  ta.addEventListener('input', autosize);
+  ta.addEventListener('input', (e) => { autosize(); if (!e.isComposing) liveKana(); });
+  ta.addEventListener('compositionend', () => setTimeout(liveKana, 0));
 
   micBtns.forEach((b) => b.addEventListener('click', () => toggleMic(b.dataset.mic)));
   kbdBtns.forEach((b) => {
@@ -1205,9 +1271,30 @@
     silenceInput.value = String(state.silence);
     $('#silenceOut').textContent = String(state.silence).replace('.', ',') + ' s';
   }
+  function syncVoice() {
+    document.querySelectorAll('[data-voice]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.voice === state.voice)));
+    $('#kanaInput').checked = state.kana;
+    const info = $('#voiceInfo');
+    let v = null;
+    try { v = NATIVE ? JSON.parse(NATIVE.voices()) : null; } catch (e) {}
+    if (!v || !v.fr) { info.textContent = NATIVE ? '' : 'Dans le navigateur, la voix d’homme est la voix habituelle rendue plus grave.'; return; }
+    const missing = ['fr', 'ja'].filter((l) => !(v[l] && v[l][state.voice] > 0)).map((l) => (l === 'ja' ? 'japonaise' : 'française'));
+    info.textContent = !missing.length
+      ? 'Voix ' + (state.voice === 'male' ? 'd’homme' : 'de femme') + ' trouvée en français et en japonais.'
+      : 'Pas de voix ' + (state.voice === 'male' ? 'd’homme' : 'de femme') + ' ' + missing.join(' ni ') + ' reconnue sur ce téléphone'
+        + (state.voice === 'male' ? ' : Kotoba rend la voix habituelle plus grave. Pour une vraie voix d’homme, installe « Services de reconnaissance vocale de Google » et ses voix (Réglages Android > Synthèse vocale).' : '.');
+    logSpeech('voix : ' + JSON.stringify(v));
+  }
+  function setVoice(g) {
+    state.voice = g;
+    save();
+    try { if (NATIVE) NATIVE.voice(g); } catch (e) {}
+    syncVoice();
+  }
   function openSettings(msg) {
     cancelListening();
     syncSilence();
+    syncVoice();
     $('#speechLog').textContent = speechLog.length ? speechLog.join('\n') : 'Rien pour l’instant : fais une dictée, puis reviens ici.';
     keyInput.value = storedKey();   // never shows the built-in key
     wsInput.value = storedWorkspace();
@@ -1274,6 +1361,10 @@
       else navigator.clipboard.writeText(text).then(() => toast('Journal copié'));
     } catch (e) {}
   });
+  document.querySelectorAll('[data-voice]').forEach((b) => b.addEventListener('click', () => setVoice(b.dataset.voice)));
+  $('#tryFr').addEventListener('click', () => speak('Bonjour, je suis la voix de Kotoba. Tu m’entends bien ?', 'fr'));
+  $('#tryJa').addEventListener('click', () => speak('こんにちは。ことばの声です。よろしくお願いします。', 'ja'));
+  $('#kanaInput').addEventListener('change', () => { state.kana = $('#kanaInput').checked; save(); syncMic(); });
   silenceInput.addEventListener('input', () => {
     const v = Number(silenceInput.value);
     if (v >= 1 && v <= 15) { state.silence = v; syncSilence(); save(); }
@@ -1376,6 +1467,7 @@
 
   // ---------- start ----------
   load();
+  try { if (NATIVE) NATIVE.voice(state.voice); } catch (e) {}
   setSending(false);
   syncPrefs();
   syncBanner();
