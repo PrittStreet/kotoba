@@ -325,7 +325,15 @@ public class MainActivity extends Activity {
                 }
             }
         }
-        callback.onReceiveValue(result == null ? null : new Uri[]{result});
+        if (result == null) {
+            callback.onReceiveValue(null);
+            return;
+        }
+        Uri picked = result;
+        new Thread(() -> {
+            Uri usable = Photos.usable(this, picked);
+            runOnUiThread(() -> callback.onReceiveValue(new Uri[]{usable}));
+        }, "kotoba-photo").start();
     }
 
     private void clearPhotos() {

@@ -55,7 +55,14 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     clavier 日本語, le rōmaji tapé devient des kana en direct (`toKana`, table `KANA`), le dernier
     « n » devient ん à l'envoi. Il s'active seul quand le clavier reste en alphabet côté japonais.
   - Photos : `capture` → appli appareil photo via `FileProvider` (pas de permission CAMERA),
-    sinon sélecteur de photos.
+    sinon sélecteur de photos. Les photos HEIF (« haute efficacité » des Samsung) ou de plus de
+    8 Mo (50 et 200 Mpx du S23 Ultra) sont converties en JPEG d'environ 2048 px, à l'endroit
+    (`Photos.java`, `ImageDecoder`).
+  - Photos de travers : téléphone pointé vers le bas (machine à laver, table), l'appareil photo
+    enregistre souvent la photo de côté. Claude donne `turn` (ligne du titre : comment la photo est
+    tournée) et `r` par bloc (sens du texte, en degrés horaires ; absent = `turn`). La photo est
+    affichée tournée pour que son texte se lise à l'endroit, chaque traduction suit son texte, et
+    le bouton ↻ (fil et plein écran) tourne d'un quart à la main.
   - Voix : `TextToSpeech` (`Voice.java`), femme ou homme (`state.voice`, Réglages > Voix).
     Android ne donne pas le genre d'une voix : il est deviné par son nom (codes des voix Google,
     `jac`/`jad`/`frb`/`frd` = homme). Sans voix d'homme installée, la voix par défaut est rendue
@@ -89,8 +96,8 @@ y restent, sans étoile).
 
 Ce qui vient de l'artifact et doit rester : détection FR/JA, rōmaji et note de nuance
 (format `@@R` / `@@F` / `@@N`), Rapide / Soigné, Poli / Familier, Écouter, Copier, Montrer, Favoris,
-historique, photos « façon Google Lens » (une ligne JSON par bloc, `{"b":[x0,y0,x1,y1],"o":…,"t":…}`,
-coordonnées 0–1000), design (sceau 言葉, indigo 藍 + vermillon 朱, Zen Kaku Gothic New, clair/sombre).
+historique, photos « façon Google Lens » (une ligne JSON par bloc, `{"b":[x0,y0,x1,y1],"r":…,"o":…,"t":…}`,
+coordonnées 0–1000 sur la photo telle quelle), design (sceau 言葉, indigo 藍 + vermillon 朱, Zen Kaku Gothic New, clair/sombre).
 
 ## Tester
 

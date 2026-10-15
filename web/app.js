@@ -40,11 +40,13 @@
     stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></svg>',
     close: SV('<path d="M6 6l12 12M18 6L6 18"/>'),
     mic: SV('<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/>'),
-    kbd: SV('<rect x="2.5" y="6" width="19" height="12" rx="2.2"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M8 14.2h8"/>')
+    kbd: SV('<rect x="2.5" y="6" width="19" height="12" rx="2.2"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M8 14.2h8"/>'),
+    turn: SV('<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4.5H15"/>')
   };
   kbdBtns.forEach((b) => { b.innerHTML = ICONS.kbd; });
   micBtns.forEach((b) => b.insertAdjacentHTML('beforeend', '<svg class="ring" aria-hidden="true"><rect pathLength="100"/></svg>'));
   $('#lvClose').innerHTML = ICONS.close;
+  $('#lvTurn').innerHTML = ICONS.turn;
   favBtn.innerHTML = ICONS.star;
   clearBtn.innerHTML = ICONS.trash;
   setBtn.innerHTML = ICONS.gear;
@@ -382,10 +384,12 @@
       'Translate the text visible in it into French, Google Lens style: each French translation will be drawn over the original text, inside the same box.',
       '',
       'Reply with one JSON object per line and nothing else: no Markdown, no code fence, no comments.',
-      'Line 1: {"title": "<what the photo shows, 2 to 6 words in French>"}',
-      'Then one line per text block, in reading order (top to bottom, then left to right):',
-      '{"b": [x0, y0, x1, y1], "o": "<original text>", "t": "<French translation>"}',
-      'b is the bounding box of the ORIGINAL text as integers from 0 to 1000 measured on the whole image: x goes from the left edge (0) to the right edge (1000), y from the top edge (0) to the bottom edge (1000). Keep each box tight around its text.',
+      'Line 1: {"title": "<what the photo shows, 2 to 6 words in French>", "turn": <0, 90, 180 or 270>}',
+      'turn: how far the whole photo is turned clockwise from upright, judged from most of its text. Phones often save a photo sideways (taken in landscape, or pointing down at a machine or a table). 0: the text reads normally. 90: horizontal writing runs from top to bottom (tops of the letters face right). 270: it runs from bottom to top (tops of the letters face left). 180: upside down. Japanese written vertically (縦書き) with upright characters is upright: 0.',
+      'Then one line per text block, in reading order:',
+      '{"b": [x0, y0, x1, y1], "r": <0, 90, 180 or 270>, "o": "<original text>", "t": "<French translation>"}',
+      'b is the bounding box of the ORIGINAL text as integers from 0 to 1000 measured on the whole image as it is (not turned): x goes from the left edge (0) to the right edge (1000), y from the top edge (0) to the bottom edge (1000). Keep each box tight around its text.',
+      'r is the direction the original text runs in the image as it is, in degrees clockwise: 0 left to right, 90 top to bottom (vertical Japanese, or text turned a quarter clockwise), 180 upside down, 270 bottom to top. The French is drawn in that same direction.',
       '',
       'Rules:',
       '- One block = one line of text, or one cell, label or heading that belongs together. Never merge text that is far apart.',
@@ -394,13 +398,18 @@
       '- At most 80 blocks. If there is more text, keep what matters most to a traveller: titles, names, headings, instructions, warnings.'
     ].join('\n');
   }
+  // 0, 90, 180 or 270: the nearest quarter turn (degrees clockwise).
+  function quarter(v) {
+    const n = Number(v);
+    return isFinite(n) ? ((Math.round(n / 90) * 90) % 360 + 360) % 360 : 0;
+  }
   function eatLensLine(it, raw) {
     let ln = String(raw).trim().replace(/,\s*$/, '');
     if (!ln || ln[0] !== '{') return false;
     let o;
     try { o = JSON.parse(ln); } catch (e) { return false; }
     if (!o || typeof o !== 'object') return false;
-    if (typeof o.title === 'string') { it.title = o.title.trim(); return true; }
+    if (typeof o.title === 'string') { it.title = o.title.trim(); it.turn = quarter(o.turn); return true; }
     if (!Array.isArray(o.b) || o.b.length !== 4 || typeof o.t !== 'string' || !o.t.trim()) return false;
     let b = o.b.map(Number);
     if (b.some((v) => !isFinite(v))) return false;
@@ -411,7 +420,11 @@
     if (y1 < y0) [y0, y1] = [y1, y0];
     if (x1 - x0 < 6) x1 = Math.min(1000, x0 + 6);
     if (y1 - y0 < 6) y1 = Math.min(1000, y0 + 6);
-    it.blocks.push({ b: [x0, y0, x1, y1].map(Math.round), o: typeof o.o === 'string' ? o.o.trim() : '', t: o.t.trim() });
+    const blk = { b: [x0, y0, x1, y1].map(Math.round), o: typeof o.o === 'string' ? o.o.trim() : '', t: o.t.trim() };
+    // no direction given: the photo's own (most of its text runs that way)
+    const r = o.r === undefined || o.r === null ? (it.turn || 0) : quarter(o.r);
+    if (r) blk.r = r;
+    it.blocks.push(blk);
     return true;
   }
   function lensText(it) {
@@ -631,11 +644,15 @@
     const w = ov.clientWidth, h = ov.clientHeight;
     const span = ov.firstChild;
     if (w < 2 || h < 2 || !span) return;
-    let size = Math.min(48, Math.max(6, h * 0.78));
+    // Text running up or down the photo: the lines follow the box's height.
+    const side = ov.dataset.r === '90' || ov.dataset.r === '270';
+    const room = side ? w : h;
+    if (side) span.style.width = h + 'px';
+    let size = Math.min(48, Math.max(6, room * 0.78));
     ov.style.fontSize = size + 'px';
     let n = 0;
     // shrink rather than break words: stop when the text fits the box both ways
-    while ((span.scrollWidth > span.clientWidth + 1 || span.offsetHeight > h + 1) && size > 6 && n++ < 24) {
+    while ((span.scrollWidth > span.clientWidth + 1 || span.offsetHeight > room + 1) && size > 6 && n++ < 24) {
       size = Math.max(6, size * 0.88);
       ov.style.fontSize = size + 'px';
     }
@@ -651,14 +668,31 @@
     ov.style.width = (b.b[2] - b.b[0]) / 10 + '%';
     ov.style.height = (b.b[3] - b.b[1]) / 10 + '%';
     ov.setAttribute('aria-label', b.t);
-    ov.append(el('span', null, b.t));
+    const span = el('span', null, b.t);
+    if (b.r) { ov.dataset.r = String(b.r); span.style.transform = 'rotate(' + b.r + 'deg)'; }
+    ov.append(span);
     return ov;
   }
+  // turn: how the photo is turned (said by Claude, or the "turn" button). It is shown turned back,
+  // so that its text reads upright; the boxes stay on the photo as it is.
+  const turnOf = (it) => (it.turn === 90 || it.turn === 180 || it.turn === 270 ? it.turn : 0);
+  const photoRatio = (it) => (it.w && it.h ? it.w / it.h : 0.75);
+  const shownRatio = (it) => (turnOf(it) % 180 ? 1 / photoRatio(it) : photoRatio(it));
   function buildStage(it, src, fill) {
+    const turn = turnOf(it), r = photoRatio(it), shown = shownRatio(it);
+    const frame = el('div', 'frame');
+    frame.dataset.turn = String(turn);
+    frame.style.aspectRatio = shown.toFixed(4);
+    if (!fill) frame.style.width = 'min(100%, ' + (62 * shown).toFixed(2) + 'vh)';
     const st = el('div', 'stage' + (it.status === 'pending' ? ' scan' : ''));
-    const r = it.w && it.h ? it.w / it.h : 0.75;
     st.style.aspectRatio = r.toFixed(4);
-    if (!fill) st.style.width = 'min(100%, ' + (62 * r).toFixed(2) + 'vh)';
+    if (turn) {
+      // Sideways: the photo's width is the frame's height (frame height = frame width × r).
+      st.style.width = turn % 180 ? (r * 100).toFixed(3) + '%' : '100%';
+      st.style.left = '50%';
+      st.style.top = '50%';
+      st.style.transform = 'translate(-50%, -50%) rotate(' + (-turn) + 'deg)';
+    }
     const img = new Image();
     img.src = src;
     img.alt = it.title || 'Photo';
@@ -666,8 +700,9 @@
     const layer = el('div', 'layer');
     (it.blocks || []).forEach((b, i) => layer.append(ovEl(b, i)));
     st.append(img, layer);
+    frame.append(st);
     if (ro) ro.observe(st); else requestAnimationFrame(() => fitStage(st));
-    return st;
+    return frame;
   }
   function lensStatus(it) {
     const n = (it.blocks || []).length;
@@ -681,6 +716,12 @@
     wrap.append(buildStage(it, src, false));
     const bar = el('div', 'lensbar');
     bar.append(el('span', 'status', lensStatus(it)));
+    if (it.status !== 'pending') {
+      const t = el('button', 'icon-btn turn');
+      t.type = 'button'; t.dataset.act = 'turn'; t.setAttribute('aria-label', 'Tourner la photo');
+      t.innerHTML = ICONS.turn;
+      bar.append(t);
+    }
     if (it.status !== 'pending' && it.blocks && it.blocks.length) {
       const o = el('button', 'chip', 'Original');
       o.type = 'button'; o.dataset.act = 'orig'; o.setAttribute('aria-pressed', 'false');
@@ -701,7 +742,9 @@
   function lensProgress(it) {
     const card = thread.querySelector('.card[data-id="' + it.id + '"]');
     const layer = card && card.querySelector('.layer');
-    if (!layer) { updateCard(it); return; }
+    const frame = card && card.querySelector('.frame');
+    // the first line says how the photo is turned: show it the right way up
+    if (!layer || !frame || frame.dataset.turn !== String(turnOf(it))) { updateCard(it); return; }
     for (let i = layer.children.length; i < it.blocks.length; i++) {
       const ov = ovEl(it.blocks[i], i);
       layer.append(ov);
@@ -1138,6 +1181,7 @@
       if (st) b.setAttribute('aria-pressed', String(st.classList.toggle('orig')));
     }
     else if (act === 'lens') openLens(it);
+    else if (act === 'turn') turnPhoto(it);
     else if (act === 'view') { it.view = b.dataset.view; save(); updateCard(it); }
     else if (act === 'fav') {
       it.fav = !it.fav;
@@ -1262,7 +1306,11 @@
   // Re-encode every photo as a reasonably sized JPEG: phone photos can be large or in formats Claude refuses.
   async function prepareImage(file) {
     let bmp;
-    try { bmp = await createImageBitmap(file); } catch (e) { return { blob: file, thumb: '', photo: '', w: 0, h: 0 }; }
+    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) {
+      // very large photo: let the decoder shrink it
+      try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image', resizeWidth: 2048, resizeQuality: 'high' }); }
+      catch (e2) { return { blob: file, thumb: '', photo: '', w: 0, h: 0 }; }
+    }
     try {
       const big = canvasFor(bmp, 1568);
       const blob = await new Promise((res) => big.toBlob((b) => res(b), 'image/jpeg', 0.85));
@@ -1433,7 +1481,7 @@
   let lvItem = null, lvZoom = 1;
   function layoutLens() {
     if (!lvItem) return;
-    const r = lvItem.w && lvItem.h ? lvItem.w / lvItem.h : 0.75;
+    const r = shownRatio(lvItem);
     const base = Math.min(lvScroll.clientWidth, lvScroll.clientHeight * r);
     lvWrap.style.width = Math.max(1, Math.round(base * lvZoom)) + 'px';
     $('#lvLevel').textContent = '×' + lvZoom;
@@ -1461,6 +1509,20 @@
     lvScroll.scrollTop = 0; lvScroll.scrollLeft = 0;
     $('#lvClose').focus();
   }
+  // A quarter turn clockwise, on screen: in the thread and in the full-screen view.
+  function turnPhoto(it) {
+    it.turn = (turnOf(it) + 270) % 360;
+    save();
+    updateCard(it);
+    if (lvItem === it) {
+      const src = photoSrc(it);
+      lvOrig.setAttribute('aria-pressed', 'false');
+      lvWrap.textContent = '';
+      if (src) lvWrap.append(buildStage(it, src, true));
+      layoutLens();
+    }
+  }
+  $('#lvTurn').addEventListener('click', () => { if (lvItem) turnPhoto(lvItem); });
   function closeLens() { closeSheet(); lensView.hidden = true; lvItem = null; lvWrap.textContent = ''; darkBars(false); }
   $('#lvClose').addEventListener('click', closeLens);
   $('#lvIn').addEventListener('click', () => { const k = ZOOMS.indexOf(lvZoom); if (k < ZOOMS.length - 1) setZoom(ZOOMS[k + 1]); });

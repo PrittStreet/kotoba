@@ -187,18 +187,20 @@ a{color:var(--ai)}
 
 /* Photo translated in place */
 .lens{display:flex;flex-direction:column;gap:8px;min-width:0}
-.stage{position:relative;align-self:center;width:100%;max-width:100%;border-radius:10px;overflow:hidden;background:var(--line)}
+.frame{position:relative;align-self:center;width:100%;max-width:100%;border-radius:10px;overflow:hidden;background:var(--line)}
+.stage{position:absolute;left:0;top:0;width:100%;overflow:hidden}
 .stage img{position:absolute;inset:0;width:100%;height:100%;max-width:none;display:block;object-fit:fill}
 .layer{position:absolute;inset:0;transition:opacity .2s}
 .stage.orig .layer{opacity:0;pointer-events:none}
 .ov{position:absolute;display:flex;align-items:center;justify-content:center;padding:0 2px;background:var(--ov-bg);color:var(--ov-fg);border-radius:3px;box-shadow:0 0 0 1px var(--ov-edge);font-family:var(--f-ui);font-weight:500;line-height:1.08;text-align:center;overflow:hidden;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
-.ov span{display:block;width:100%;overflow-wrap:normal;word-break:normal}
+.ov span{display:block;flex:none;width:100%;overflow-wrap:normal;word-break:normal}
 .ov:focus-visible{outline:2px solid var(--shu);outline-offset:1px}
 .stage.scan::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--ai);box-shadow:0 0 14px 3px var(--ai);animation:scan 1.8s ease-in-out infinite alternate}
 @keyframes scan{from{top:0}to{top:calc(100% - 3px)}}
 .lensbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .lensbar .status{flex:1;min-width:0;font-size:.85rem;color:var(--muted)}
 .lensbar .chip, .lensbar .txt-btn{padding:5px 12px;font-size:.82rem}
+.lensbar .turn{width:34px;height:34px}
 .found summary{cursor:pointer;color:var(--muted);font-size:.88rem;padding:4px 0}
 .found .rows{padding-top:8px}
 
@@ -218,7 +220,7 @@ a{color:var(--ai)}
 .lv-bar .chip[aria-pressed="true"]{background:var(--viewer-fg);color:var(--viewer-bg)}
 .lv-scroll{flex:1;min-height:0;overflow:auto;display:flex;-webkit-overflow-scrolling:touch}
 .lv-wrap{flex:none;margin:auto}
-.lv-wrap .stage{border-radius:0;width:100%}
+.lv-wrap .frame{border-radius:0;width:100%}
 .lv-zoom{position:absolute;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(18px + var(--inset-bottom));display:flex;align-items:center;gap:2px;background:var(--viewer-fg);color:var(--viewer-bg);border-radius:999px;padding:4px}
 .lv-zoom button{width:40px;height:40px;border-radius:50%;font-size:1.4rem;line-height:1;color:var(--viewer-bg)}
 .lv-zoom span{min-width:3ch;text-align:center;font-size:.85rem;font-variant-numeric:tabular-nums}
