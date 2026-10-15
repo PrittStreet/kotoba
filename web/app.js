@@ -129,6 +129,10 @@
     const u = photoUrls.get(id);
     if (u) { try { URL.revokeObjectURL(u); } catch (e) {} photoUrls.delete(id); }
   }
+  // The conversation: what is shown, and the context of the next translations. Clearing it keeps the
+  // favourites apart (out: true): shown only with the star, never used as context.
+  const inConv = (i) => !i.out;
+  const convItems = () => state.items.filter(inConv);
   function trimItems() {
     while (state.items.length > MAX_ITEMS) {
       const k = state.items.findIndex((i) => !i.fav);
@@ -328,7 +332,7 @@
     const toJa = it.tgt === 'ja';
     const idx = state.items.indexOf(it);
     const ctx = state.items.slice(0, idx < 0 ? state.items.length : idx)
-      .filter((x) => x.kind === 'text' && x.status === 'done' && x.tr)
+      .filter((x) => inConv(x) && x.kind === 'text' && x.status === 'done' && x.tr)
       .slice(-3)
       .map((x) => '- ' + x.src.toUpperCase() + ': ' + x.text + '  →  ' + x.tgt.toUpperCase() + ': ' + x.tr)
       .join('\n');
@@ -718,18 +722,20 @@
   }
   function render() {
     thread.textContent = '';
-    if (!state.items.length && !state.favOnly) {
+    const conv = convItems();
+    if (!conv.length && !state.favOnly) {
       thread.append(el('p', 'intro', stt
         ? 'Touche le micro « Français » ou « 日本語 » et parle : la traduction arrive toute seule à la fin de la phrase. Le petit bouton clavier à côté sert à écrire dans cette langue. Tu peux aussi prendre en photo un menu ou un panneau.'
         : 'Écris ou dicte une phrase, ou prends en photo un menu ou un panneau : la traduction s’affiche directement sur l’image. Le japonais est reconnu tout seul.'));
       EXAMPLES.forEach((x) => thread.append(buildCard(x, true)));
       return;
     }
-    const list = state.favOnly ? state.items.filter((i) => i.fav) : state.items;
+    const list = state.favOnly ? state.items.filter((i) => i.fav) : conv;
     if (!list.length) {
       thread.append(el('p', 'intro', 'Aucun favori pour l’instant. Touche « Garder » sous une traduction pour la retrouver ici.'));
       return;
     }
+    if (state.favOnly) thread.append(el('p', 'intro', 'Tes favoris, à part de la conversation : ils restent quand tu l’effaces et ne servent pas de contexte aux traductions.'));
     list.forEach((it) => thread.append(buildCard(it)));
     if (state.favOnly) thread.scrollTop = 0; else toBottom();
   }
@@ -745,6 +751,7 @@
     });
     romajiBtn.setAttribute('aria-pressed', String(state.romaji));
     favBtn.setAttribute('aria-pressed', String(state.favOnly));
+    clearBtn.setAttribute('aria-label', state.favOnly ? 'Effacer les favoris' : 'Effacer la conversation');
     ta.lang = state.speaker;
     sendBtn.classList.toggle('ja', state.speaker === 'ja');
     syncKeyboardLang();
@@ -1058,7 +1065,7 @@
 
   // ---------- actions ----------
   function addItem(it) {
-    const reRender = !state.items.length || state.favOnly;
+    const reRender = !state.items.some(inConv) || state.favOnly;
     state.items.push(it);
     trimItems();
     if (state.favOnly) { state.favOnly = false; syncPrefs(); }
@@ -1133,7 +1140,10 @@
     else if (act === 'lens') openLens(it);
     else if (act === 'view') { it.view = b.dataset.view; save(); updateCard(it); }
     else if (act === 'fav') {
-      it.fav = !it.fav; save();
+      it.fav = !it.fav;
+      // No longer a favourite, and already cleared from the conversation: nowhere left to show it.
+      if (!it.fav && it.out) { forgetPhoto(it.id); state.items.splice(state.items.indexOf(it), 1); }
+      save();
       if (state.favOnly && !it.fav) render(); else updateCard(it);
       toast(it.fav ? 'Gardé dans les favoris' : 'Retiré des favoris');
     } else if (act === 'retry') {
@@ -1175,27 +1185,54 @@
     syncPrefs(); save();
   }));
   romajiBtn.addEventListener('click', () => { state.romaji = !state.romaji; syncPrefs(); save(); });
-  favBtn.addEventListener('click', () => { state.favOnly = !state.favOnly; syncPrefs(); render(); });
+  favBtn.addEventListener('click', () => { state.favOnly = !state.favOnly; confirmBar.hidden = true; syncPrefs(); render(); });
+  // The trash clears what is shown: the conversation, or the favourites. Always asks first.
   clearBtn.addEventListener('click', () => {
-    $('#keepFavs').hidden = !state.items.some((i) => i.fav);
-    confirmBar.hidden = !confirmBar.hidden;
+    if (!confirmBar.hidden) { confirmBar.hidden = true; return; }
+    const favs = state.favOnly;
+    if (favs ? !state.items.some((i) => i.fav) : !state.items.some(inConv)) {
+      toast(favs ? 'Aucun favori à effacer.' : 'La conversation est déjà vide.');
+      return;
+    }
+    confirmBar.dataset.what = favs ? 'favs' : 'conv';
+    const nFav = state.items.filter((i) => i.fav && inConv(i)).length;
+    $('#confirmText').textContent = favs ? 'Effacer tous les favoris ?'
+      : 'Effacer la conversation ?' + (nFav ? (nFav > 1 ? ' Les ' + nFav + ' favoris restent.' : ' Le favori reste.') : '');
+    confirmBar.hidden = false;
   });
   $('#cancelClear').addEventListener('click', () => { confirmBar.hidden = true; });
-  // keepFavs: only the favourites stay. Otherwise everything goes (the settings and the key stay).
-  function clearMessages(keepFavs) {
+  // Favourites leave the conversation but stay in the favourites. The settings and the key stay.
+  function clearConversation() {
     if (busy && ctl) ctl.abort();
     cancelListening();
-    state.items.filter((i) => !(keepFavs && i.fav)).forEach((i) => forgetPhoto(i.id));
-    state.items = keepFavs ? state.items.filter((i) => i.fav) : [];
-    state.favOnly = false;
+    let kept = 0;
+    state.items = state.items.filter((i) => {
+      if (i.out) return true;
+      if (i.fav) { i.out = true; kept++; return true; }
+      forgetPhoto(i.id);
+      return false;
+    });
     ta.value = '';
     autosize();
-    confirmBar.hidden = true;
     syncPrefs(); save(); render();
-    toast(keepFavs ? 'Messages effacés, favoris gardés' : 'Tout est effacé');
+    toast(kept ? 'Conversation effacée, favoris gardés à part' : 'Conversation effacée');
   }
-  $('#doClear').addEventListener('click', () => clearMessages(false));
-  $('#keepFavs').addEventListener('click', () => clearMessages(true));
+  // Favourites still in the conversation stay there, without the star.
+  function clearFavourites() {
+    state.items = state.items.filter((i) => {
+      if (!i.fav) return true;
+      if (i.out) { forgetPhoto(i.id); return false; }
+      i.fav = false;
+      return true;
+    });
+    state.favOnly = false;
+    syncPrefs(); save(); render();
+    toast('Favoris effacés');
+  }
+  $('#doClear').addEventListener('click', () => {
+    confirmBar.hidden = true;
+    if (confirmBar.dataset.what === 'favs') clearFavourites(); else clearConversation();
+  });
 
   // Each label opens its own picker natively (more reliable in web views than a scripted click):
   // the camera input asks for the rear camera, the gallery input for an existing photo.

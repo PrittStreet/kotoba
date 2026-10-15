@@ -81,6 +81,12 @@ traduction mot à mot en français de son japonais (section `@@F`), affichée pa
 JA / FR au bout de la ligne rōmaji. La note `@@N` reste réservée aux nuances. Côté japonais : traduction du sens,
 avec le contexte de la conversation. Même modèle, même vitesse : tout est dans `textPrompt`.
 
+Conversation et favoris (voulu par Ronan) : la conversation affichée sert de contexte aux
+traductions ; les favoris sont à part et n'en servent jamais. La poubelle efface ce qui est
+affiché, toujours après confirmation : la conversation (ses favoris en sortent avec `out: true`
+mais restent dans les favoris) ou, depuis la vue ★, les favoris (ceux encore dans la conversation
+y restent, sans étoile).
+
 Ce qui vient de l'artifact et doit rester : détection FR/JA, rōmaji et note de nuance
 (format `@@R` / `@@F` / `@@N`), Rapide / Soigné, Poli / Familier, Écouter, Copier, Montrer, Favoris,
 historique, photos « façon Google Lens » (une ligne JSON par bloc, `{"b":[x0,y0,x1,y1],"o":…,"t":…}`,
