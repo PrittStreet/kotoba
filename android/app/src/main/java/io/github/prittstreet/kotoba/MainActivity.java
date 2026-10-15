@@ -111,6 +111,9 @@ public class MainActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setAllowFileAccess(false);
         s.setSupportZoom(false);
+        // The page follows the system font size (Samsung phones are often set large), up to 120 %:
+        // beyond that the microphone keys and the translations drawn on photos no longer fit.
+        s.setTextZoom(Math.min(120, Math.round(getResources().getConfiguration().fontScale * 100)));
         web.addJavascriptInterface(new Bridge(this), "KotobaAndroid");
         web.setWebViewClient(new WebViewClient() {
             @Override

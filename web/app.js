@@ -907,6 +907,11 @@
     ta.placeholder = listening
       ? (listening.lang === 'ja' ? '話してください…' : 'Parle…')
       : (state.speaker === 'ja' ? (state.kana ? 'ローマ字で入力 → かな' : 'ここに入力') : 'Écris ici');
+    // Rōmaji for kana: no suggestions nor autocorrect (the keyboard would turn "arigatou" into a
+    // French word), so each letter arrives at once and becomes kana as it is typed.
+    const plain = kanaTyping();
+    ['autocomplete', 'autocorrect', 'autocapitalize'].forEach((a) => { if (plain) ta.setAttribute(a, 'off'); else ta.removeAttribute(a); });
+    ta.spellcheck = !plain;
   }
   // In the Android app, the keyboard opens in the language of the key (Gboard follows the hint).
   let hintLang = '';
@@ -1047,7 +1052,10 @@
         return;
       }
       // The keyboard stays in the alphabet: Kotoba writes the kana itself.
-      if (!state.kana) { state.kana = true; save(); syncMic(); }
+      if (!state.kana) {
+        state.kana = true; save(); syncMic();
+        try { if (NATIVE) NATIVE.keyboard('ja', true); } catch (e) {} // the keyboard reads the new settings
+      }
       toast((samsung ? 'Le clavier Samsung reste en alphabet' : 'Le clavier reste en alphabet') + ' : tape le japonais en rōmaji, Kotoba l’écrit en かな (arigatou → ありがとう). Ou touche 🌐 pour son clavier japonais.', 8000);
       return;
     }

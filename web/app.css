@@ -10,7 +10,7 @@
   /* space taken by the status and navigation bars: the Android app sets these, browsers use env() */
   --inset-top:env(safe-area-inset-top,0px); --inset-bottom:env(safe-area-inset-bottom,0px);
   /* photo overlays and the photo viewer keep one look in both themes: they sit on a photograph */
-  --ov-bg:rgba(248,249,252,.92); --ov-fg:#10131F; --ov-edge:rgba(16,19,31,.14);
+  --ov-bg:rgba(248,249,252,.95); --ov-fg:#10131F; --ov-edge:rgba(16,19,31,.14);
   --viewer-bg:#0B0D16; --viewer-fg:#F2F3F8; --viewer-ctl:rgba(242,243,248,.14);
   color-scheme:light;
 }
@@ -49,7 +49,7 @@ a{color:var(--ai)}
 .seal span{display:flex;flex-direction:column;align-items:center;gap:1px}
 .brand{display:flex;flex-direction:column;line-height:1.2;min-width:0;margin-left:2px}
 .name{font-weight:700;font-size:1.15rem;letter-spacing:.01em}
-.pair{font-size:.74rem;color:var(--muted);white-space:nowrap}
+.pair{font-size:.74rem;color:var(--muted)}
 .spacer{flex:1}
 .icon-btn{flex:none;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;color:var(--muted)}
 .icon-btn svg{width:22px;height:22px}
@@ -116,11 +116,14 @@ a{color:var(--ai)}
 /* each language: a wide microphone key and a small keyboard key */
 .spk-pair{--accent:var(--ai);--accent-soft:var(--ai-soft);--on-accent:var(--on-ai);display:flex;gap:5px;min-width:0}
 .spk-pair.ja{--accent:var(--shu);--accent-soft:var(--shu-soft);--on-accent:var(--on-shu)}
-.spk{position:relative;flex:1;border:1.5px solid var(--accent);border-radius:14px;padding:12px 8px;font-size:.98rem;font-weight:500;color:var(--accent);background:var(--accent-soft);display:flex;align-items:center;justify-content:center;gap:8px;min-width:0;white-space:nowrap;overflow:hidden}
+.spk{position:relative;flex:1;border:1.5px solid var(--accent);border-radius:14px;padding:12px 8px;font-size:.98rem;font-weight:500;color:var(--accent);background:var(--accent-soft);display:flex;align-items:center;justify-content:center;gap:6px;min-width:0;white-space:nowrap;overflow:hidden}
 .kbd{flex:none;width:44px;border:1.5px solid var(--accent);border-radius:14px;color:var(--accent);background:var(--surface);display:grid;place-items:center}
 .kbd svg{width:21px;height:21px}
 .kbd:active{background:var(--accent-soft)}
-.spk .lbl{overflow:hidden;text-overflow:ellipsis}
+.spk .lbl{overflow:hidden;text-overflow:ellipsis;font-size:min(1em,17cqi)}
+/* narrow screen or large system font: the language name matters more than the icon */
+.spk{container-type:inline-size}
+@container (max-width:88px){.spk .ico{display:none}}
 .spk svg{flex:none;width:20px;height:20px}
 .spk.listening{background:var(--accent);color:var(--on-accent)}
 /* countdown: the outline drains over the silence left before the dictation ends */
@@ -192,7 +195,7 @@ a{color:var(--ai)}
 .stage img{position:absolute;inset:0;width:100%;height:100%;max-width:none;display:block;object-fit:fill}
 .layer{position:absolute;inset:0;transition:opacity .2s}
 .stage.orig .layer{opacity:0;pointer-events:none}
-.ov{position:absolute;display:flex;align-items:center;justify-content:center;padding:0 2px;background:var(--ov-bg);color:var(--ov-fg);border-radius:3px;box-shadow:0 0 0 1px var(--ov-edge);font-family:var(--f-ui);font-weight:500;line-height:1.08;text-align:center;overflow:hidden;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+.ov{position:absolute;display:flex;align-items:center;justify-content:center;padding:0 2px;background:var(--ov-bg);color:var(--ov-fg);border-radius:3px;box-shadow:0 0 0 1px var(--ov-edge);font-family:var(--f-ui);font-weight:500;line-height:1.08;text-align:center;overflow:hidden}
 .ov span{display:block;flex:none;width:100%;overflow-wrap:normal;word-break:normal}
 .ov:focus-visible{outline:2px solid var(--shu);outline-offset:1px}
 .stage.scan::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--ai);box-shadow:0 0 14px 3px var(--ai);animation:scan 1.8s ease-in-out infinite alternate}

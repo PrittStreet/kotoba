@@ -54,6 +54,8 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     Mode « rōmaji → かな » (`state.kana`, Réglages > Clavier) pour ces claviers : avec le bouton
     clavier 日本語, le rōmaji tapé devient des kana en direct (`toKana`, table `KANA`), le dernier
     « n » devient ん à l'envoi. Il s'active seul quand le clavier reste en alphabet côté japonais.
+    Dans ce mode, `autocomplete` / `autocorrect` / `autocapitalize` = off et pas de correcteur :
+    sinon le clavier « corrige » le rōmaji en mots français.
   - Photos : `capture` → appli appareil photo via `FileProvider` (pas de permission CAMERA),
     sinon sélecteur de photos. Les photos HEIF (« haute efficacité » des Samsung) ou de plus de
     8 Mo (50 et 200 Mpx du S23 Ultra) sont converties en JPEG d'environ 2048 px, à l'endroit
@@ -69,6 +71,10 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     plus grave (`setPitch`). Hors Android : Web Speech, même principe.
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
+  - Pas de `backdrop-filter` sur les traductions des photos : sur un Samsung, elles se
+    décalaient de la photo quand on faisait défiler pendant la traduction (calques GPU).
+  - Taille du texte : la WebView suit la police système, plafonnée à 120 % (`setTextZoom`) ;
+    le CSS tient jusque-là à 320 px de large (le micro perd son icône avant de couper la langue).
 - Signature : `android/kotoba.keystore` (mot de passe dans `app/build.gradle`), versionné exprès
   pour que chaque build s'installe par-dessus le précédent sans perdre les données.
   `versionCode` = minutes depuis le 1er janvier 2026 : toujours croissant.
