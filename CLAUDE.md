@@ -46,6 +46,11 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     écrite dans le journal de dictée (Réglages > Dictée, événements `log`) pour le dépannage sur le
     téléphone. Hors Android, la page se rabat sur la Web Speech API (`continuous` + même délai),
     puis sur le micro du clavier.
+  - Phrase dictée pendant une traduction : sa carte est créée tout de suite et attend son tour
+    (`waiting` + `runNext`), jamais dans le champ. Pendant une dictée, la touche envoyer finit la
+    phrase (elle ne devient « stop » qu'en dehors d'une dictée, `syncSend`). Le texte tapé avant
+    une dictée revient ensuite (`listening.draft`) ; les mots dictés restés dans le champ ne sont
+    jamais convertis en かな (`kanaFrom`).
   - Minuteur : chaque fois que le délai de silence repart (début, mots entendus), un événement
     `timer` fait se vider le contour du bouton micro (SVG `.ring`, `pathLength=100`) sur cette durée.
   - Clavier : petit bouton à côté de chaque micro. `KotobaWebView` donne la langue au clavier via
@@ -101,6 +106,14 @@ mais restent dans les favoris) ou, depuis la vue ★, les favoris (ceux encore d
 y restent, sans étoile). Mettre en favori : sans confirmation. Retirer un favori (« Gardé » dans la
 conversation, « Supprimer le favori » dans la vue ★) : confirmation dans la carte. Les cartes
 EXEMPLE ne s'affichent qu'avant la première traduction (`state.started`) ; la poubelle les retire.
+Tout re-rendu du fil (autre vue, nouvelle carte) ferme la confirmation de la poubelle et la fiche
+d'un bloc photo. Retour Android, dans l'ordre : fiche, plein écran, Montrer, Réglages, dictée,
+confirmation, question d'une carte, vue ★, puis l'app passe en arrière-plan.
+
+Persistance : chaque carte est enregistrée dès sa création ; une traduction coupée par un
+redémarrage devient « Traduction interrompue. » avec Réessayer (photos comprises, depuis la photo
+1000 px enregistrée). Mémoire pleine : les photos enregistrées sont retirées une à une, des plus
+anciennes aux favoris, puis les miniatures.
 
 Ce qui vient de l'artifact et doit rester : détection FR/JA, rōmaji et note de nuance
 (format `@@R` / `@@F` / `@@N`), Rapide / Soigné, Poli / Familier, Écouter, Copier, Montrer, Favoris,
@@ -110,7 +123,9 @@ coordonnées 0–1000 sur la photo telle quelle), design (sceau 言葉, indigo �
 ## Tester
 
 - Interface : servir `web/` en local et la piloter avec Playwright, API simulée avec `page.route`
-  et un faux `window.KotobaAndroid` injecté par `addInitScript`.
+  et un faux `window.KotobaAndroid` injecté par `addInitScript`. Les bugs cachés viennent surtout
+  des enchaînements « action puis changement de vue / interruption » (★, Réglages, plein écran,
+  retour Android, redémarrage, dictée pendant une traduction) : les tester systématiquement.
 - APK : `cd android && ./gradlew assembleRelease lintRelease`. Pas d'émulateur dans les sessions
   cloud (pas de KVM) : micro, caméra et voix se testent sur le téléphone de Ronan.
 
