@@ -3,54 +3,61 @@
 Projet de Ronan, francophone qui vit au Japon. Il utilise l'app depuis son téléphone Android
 (clavier Gboard, français + japonais installés). Réponds-lui en français, en le tutoyant.
 
-## D'où on part
+## Historique
 
-`artifact/kotoba.html` est la version actuelle, publiée comme artifact Claude
+`artifact/kotoba.html` est la première version, publiée comme artifact Claude
 (https://claude.ai/artifact/LpkuKNqT5KSnzNHgG4YWH1). Elle appelle Claude via la capacité
-`sample` des artifacts, donc sur l'abonnement de Ronan. Elle marche, mais trois limites
-de l'environnement artifact ont motivé la migration :
+`sample` des artifacts, donc sur l'abonnement de Ronan. Trois limites de l'environnement artifact
+ont motivé la version autonome : pas de micro (dictée seulement via le clavier), langue du clavier
+non pilotable (`lang` ignoré par Gboard), pas d'app autonome.
 
-1. **Pas de micro** : les pages artifact n'ont pas accès au micro, donc pas de Web Speech API.
-   La dictée passe par le micro du clavier.
-2. **Langue du clavier non pilotable** : l'attribut `lang` du champ est ignoré par Gboard,
-   donc la dictée japonaise oblige à basculer le clavier à la main.
-3. **Pas d'app autonome** : il faut ouvrir Claude pour l'utiliser, pas de vrai plein écran.
+Une app hors de Claude ne peut pas utiliser l'abonnement (ni la connexion de Claude Code) :
+la version autonome passe par une **clé API Anthropic**, facturée à l'usage, à part de l'abonnement.
 
-Une app hors de Claude ne peut pas utiliser l'abonnement : la version autonome passe par
-une **clé API Anthropic** (facturée à l'usage, à part de l'abonnement).
+## Version actuelle : app Android (APK)
 
-## Objectif : version autonome (web app installable)
+- `web/` : l'app, en HTML/CSS/JS sans build (`index.html`, `app.css`, `app.js`).
+  Appels directs à `POST https://api.anthropic.com/v1/messages` en streaming SSE, avec `x-api-key`,
+  `anthropic-version: 2023-06-01` et `anthropic-dangerous-direct-browser-access: true`.
+  Clé saisie dans les réglages, stockée seulement dans le `localStorage` (`kotoba.apikey`),
+  jamais dans le dépôt. Le test de clé utilise `GET /v1/models` (gratuit).
+- Modèles : `claude-haiku-5-5` (texte « Rapide »), `claude-sonnet-5-5` (« Soigné » et photos),
+  `output_config.effort: "low"`. Sonnet avec `fallbacks: "default"` + `anthropic-beta:
+  server-side-fallback-2026-07-01` ; pas de fallback possible sur Haiku. `stop_reason: "refusal"` géré.
+  Les réglages affichent une estimation du coût (prix par million de tokens dans `PRICES`).
+- `android/` : projet Gradle (AGP 8.13, Java, minSdk 26, targetSdk 36, package
+  `io.github.prittstreet.kotoba`). `MainActivity` affiche `web/` (copié dans les assets) via
+  `WebViewAssetLoader` sur `https://appassets.androidplatform.net/assets/index.html`.
+  - Pont JS `window.KotobaAndroid` (`Bridge.java`) : `canListen`, `startListening("fr-FR"|"ja-JP")`,
+    `stopListening`, `cancelListening`, `speak(text, "fr"|"ja")`, `stopSpeaking`, `copy`, `insets`,
+    `darkBars`, `version`. Retours vers la page : `kotobaNative.speech({type, text, code})`
+    (`ready`, `partial`, `final`, `error`), `kotobaInsets(top, bottom)`, `kotobaBack()`.
+  - Micro : `SpeechRecognizer` d'Android (`SpeechInput.java`), langue imposée par le bouton :
+    c'est ce qui permet de dicter en japonais sans toucher au clavier. Hors Android, la page
+    se rabat sur la Web Speech API, puis sur le micro du clavier.
+  - Photos : `capture` → appli appareil photo via `FileProvider` (pas de permission CAMERA),
+    sinon sélecteur de photos. Voix : `TextToSpeech` (`Voice.java`).
+  - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
+    `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
+- Signature : `android/kotoba.keystore` (mot de passe dans `app/build.gradle`), versionné exprès
+  pour que chaque build s'installe par-dessus le précédent sans perdre les données.
+  `versionCode` = minutes depuis le 1er janvier 2026 : toujours croissant.
+- CI : `.github/workflows/apk.yml` construit + lint à chaque push, publie une Release `apk-N`
+  (avec `kotoba.apk`) sur `main`. Lien stable : `releases/latest/download/kotoba.apk`.
 
-- Page statique (HTML/CSS/JS sans build), hébergée sur **GitHub Pages**.
-- **Installable depuis Chrome** (manifest + service worker) : icône, plein écran (`display: standalone`).
-- Appels directs à l'API Messages depuis le navigateur :
-  `POST https://api.anthropic.com/v1/messages` avec `x-api-key`, `anthropic-version: 2023-06-01`
-  et `anthropic-dangerous-direct-browser-access: true`, en streaming (SSE).
-  Vérifier ces détails dans la doc officielle avant de coder.
-- **Clé API saisie par Ronan dans les réglages**, stockée seulement dans le `localStorage` du
-  téléphone. Jamais dans le dépôt. App à usage personnel : ne pas la partager avec la clé dedans.
-- Modèles : `claude-haiku-5-5` pour le texte (rapide, ~1 $ pour 10 000 phrases),
-  `claude-sonnet-5-5` pour les photos et le mode « Soigné ». Vérifier les identifiants actuels.
+Ce qui vient de l'artifact et doit rester : détection FR/JA, rōmaji et note de nuance
+(format `@@R` / `@@N`), Rapide / Soigné, Poli / Familier, Écouter, Copier, Montrer, Favoris,
+historique, photos « façon Google Lens » (une ligne JSON par bloc, `{"b":[x0,y0,x1,y1],"o":…,"t":…}`,
+coordonnées 0–1000), design (sceau 言葉, indigo 藍 + vermillon 朱, Zen Kaku Gothic New, clair/sombre).
 
-### Ce que la version autonome doit ajouter
+## Tester
 
-- **Deux boutons micro** (français / japonais) avec la Web Speech API de Chrome :
-  `recognition.lang = 'fr-FR'` ou `'ja-JP'`, puis traduction automatique à la fin de la phrase.
-  C'est la demande principale : dicter en japonais sans toucher au clavier.
-- Garder le clavier ouvert / un seul appui par phrase autant que possible.
-
-### Ce qu'il faut reprendre de l'artifact (déjà codé dans `artifact/kotoba.html`)
-
-- Détection automatique FR/JA, traduction en streaming, rōmaji, note de nuance (format `@@R` / `@@N`).
-- Réglages Rapide / Soigné, Poli / Familier, Rōmaji.
-- Écouter (speechSynthesis), Copier, Montrer (plein écran pour l'interlocuteur), Favoris, historique.
-- Photos : bouton appareil photo (`capture="environment"`) et bouton galerie, recompression JPEG,
-  **traduction façon Google Lens** : Claude renvoie un objet JSON par ligne
-  (`{"b":[x0,y0,x1,y1],"o":…,"t":…}`, coordonnées 0–1000), affiché en superposition sur l'image,
-  avec bouton Original, plein écran zoomable, et détail d'un bloc au toucher.
-- Design : seal 言葉, indigo (藍) + vermillon (朱), Zen Kaku Gothic New, thème clair et sombre.
+- Interface : servir `web/` en local et la piloter avec Playwright, API simulée avec `page.route`
+  et un faux `window.KotobaAndroid` injecté par `addInitScript`.
+- APK : `cd android && ./gradlew assembleRelease lintRelease`. Pas d'émulateur dans les sessions
+  cloud (pas de KVM) : micro, caméra et voix se testent sur le téléphone de Ronan.
 
 ## Points à valider avec Ronan
 
-- Création de la clé API sur la console Claude et ajout de crédit.
-- Activation de GitHub Pages sur ce dépôt.
+- Création de la clé API sur platform.claude.com et ajout de crédit.
+- Premier essai sur son téléphone : dictée japonaise, photo, voix japonaise installée.

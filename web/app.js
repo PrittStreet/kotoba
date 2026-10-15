@@ -1,0 +1,1171 @@
+(() => {
+  const KEY = 'kotoba.v1';
+  const KEY_API = 'kotoba.apikey';
+  const KEY_USAGE = 'kotoba.usage';
+  const MAX_ITEMS = 150;
+  // Set by the Android app (MainActivity): native microphone, voices and clipboard.
+  const NATIVE = window.KotobaAndroid || null;
+  const $ = (s) => document.querySelector(s);
+  const thread = $('#thread'), ta = $('#src'), form = $('#form'), sendBtn = $('#sendBtn');
+  const cameraBtn = $('#cameraBtn'), galleryBtn = $('#galleryBtn'), banner = $('#banner'), toastEl = $('#toast');
+  const photoPickers = [[cameraBtn, $('#cameraInput')], [galleryBtn, $('#galleryInput')]];
+  const favBtn = $('#favBtn'), clearBtn = $('#clearBtn'), setBtn = $('#setBtn'), confirmBar = $('#confirm'), romajiBtn = $('#romajiBtn');
+  const micBtns = Array.from(document.querySelectorAll('[data-mic]'));
+  const showEl = $('#show'), settingsEl = $('#settings');
+  const keyInput = $('#keyInput'), keyStatus = $('#keyStatus');
+  const lensView = $('#lensView'), lvScroll = $('#lvScroll'), lvWrap = $('#lvWrap'), lvOrig = $('#lvOrig');
+  const sheet = $('#sheet');
+
+  const SV = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+  const ICONS = {
+    speak: SV('<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4z"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6M18.2 6.5a8 8 0 0 1 0 11"/>'),
+    copy: SV('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>'),
+    show: SV('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
+    star: SV('<path d="M12 3.6l2.6 5.2 5.8.9-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.9z"/>'),
+    trash: SV('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
+    gear: SV('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
+    camera: SV('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'),
+    gallery: SV('<rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M20.5 16l-5-5L6 19"/>'),
+    send: SV('<path d="M12 19V5M6 11l6-6 6 6"/>'),
+    stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></svg>',
+    close: SV('<path d="M6 6l12 12M18 6L6 18"/>'),
+    mic: SV('<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/>')
+  };
+  $('#lvClose').innerHTML = ICONS.close;
+  favBtn.innerHTML = ICONS.star;
+  clearBtn.innerHTML = ICONS.trash;
+  setBtn.innerHTML = ICONS.gear;
+  cameraBtn.innerHTML = ICONS.camera;
+  galleryBtn.innerHTML = ICONS.gallery;
+  $('#closeShow').innerHTML = ICONS.close;
+  $('#closeSettings').innerHTML = ICONS.close;
+
+  const EXAMPLES = [
+    { id: 'ex1', kind: 'text', src: 'fr', tgt: 'ja', text: 'Est-ce que vous avez des plats sans porc ?',
+      tr: '豚肉を使っていない料理はありますか？', ro: 'Butaniku o tsukatte inai ryōri wa arimasu ka?', note: '', status: 'done' },
+    { id: 'ex2', kind: 'text', src: 'ja', tgt: 'fr', text: 'すみません、この電車は新宿に止まりますか？',
+      tr: 'Excusez-moi, est-ce que ce train s’arrête à Shinjuku ?', ro: '', note: '', status: 'done' }
+  ];
+
+  const state = { items: [], speaker: 'fr', tier: 'quick', polite: true, romaji: true, favOnly: false };
+  const files = new Map();      // id -> image blob sent to Claude (this session only)
+  const photoUrls = new Map();  // id -> sharp object URL of that image (this session only)
+  let busy = false, ctl = null, keyProblem = '', memKey = '';
+  let listening = null;         // { lang: 'fr' | 'ja', text } while the microphone is on
+  let queuedSrc = null;         // language of a dictated sentence waiting for the current translation
+
+  // ---------- storage (per-device) ----------
+  function load() {
+    try {
+      const d = JSON.parse(localStorage.getItem(KEY) || 'null');
+      if (!d || typeof d !== 'object') return;
+      if (Array.isArray(d.items)) {
+        state.items = d.items
+          .filter((i) => i && typeof i.id === 'string' && typeof i.tr === 'string')
+          .map((i) => i.status === 'pending' ? Object.assign({}, i, { status: i.tr ? 'done' : 'error', err: i.tr ? '' : 'Traduction interrompue.' }) : i);
+      }
+      if (d.speaker === 'fr' || d.speaker === 'ja') state.speaker = d.speaker;
+      if (d.tier === 'quick' || d.tier === 'careful') state.tier = d.tier;
+      if (typeof d.polite === 'boolean') state.polite = d.polite;
+      if (typeof d.romaji === 'boolean') state.romaji = d.romaji;
+    } catch (e) { /* storage unavailable */ }
+  }
+  // Photos are heavy: if storage is full, keep only the most recent ones, then none.
+  function save() {
+    const n = state.items.length;
+    const levels = [
+      (i) => i,
+      (i, k) => (i.photo && k < n - 6 ? Object.assign({}, i, { photo: '' }) : i),
+      (i) => (i.photo || i.thumb ? Object.assign({}, i, { photo: '', thumb: '' }) : i)
+    ];
+    for (const lv of levels) {
+      try {
+        const data = { items: state.items.map(lv), speaker: state.speaker, tier: state.tier, polite: state.polite, romaji: state.romaji };
+        localStorage.setItem(KEY, JSON.stringify(data));
+        return;
+      } catch (e) { /* try a lighter copy */ }
+    }
+  }
+  function getKey() {
+    try { return (localStorage.getItem(KEY_API) || '').trim(); } catch (e) { return memKey; }
+  }
+  function setKey(k) {
+    memKey = k;
+    try { if (k) localStorage.setItem(KEY_API, k); else localStorage.removeItem(KEY_API); } catch (e) {}
+  }
+  function forgetPhoto(id) {
+    files.delete(id);
+    const u = photoUrls.get(id);
+    if (u) { try { URL.revokeObjectURL(u); } catch (e) {} photoUrls.delete(id); }
+  }
+  function trimItems() {
+    while (state.items.length > MAX_ITEMS) {
+      const k = state.items.findIndex((i) => !i.fav);
+      if (k < 0) break;
+      forgetPhoto(state.items[k].id);
+      state.items.splice(k, 1);
+    }
+  }
+
+  // ---------- helpers ----------
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  const newId = () => 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  let toastTimer;
+  function toast(msg, ms) {
+    toastEl.textContent = msg;
+    toastEl.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, ms || 2200);
+  }
+  const nearBottom = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight < 140;
+  const toBottom = () => { thread.scrollTop = thread.scrollHeight; };
+
+  const JA_RE = /[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]/;
+  const FR_RE = /[àâäçéèêëîïôöùûüœæ]/i;
+  function detectSrc(text) {
+    if (JA_RE.test(text)) return 'ja';
+    if (state.speaker === 'ja' && !FR_RE.test(text)) return 'ja'; // rōmaji typed on the Japanese side
+    return 'fr';
+  }
+
+  function copyFor(code) {
+    switch (code) {
+      case 'no_key': return 'Ajoute ta clé API Claude dans les réglages pour traduire.';
+      case 'bad_key': return 'Clé API refusée. Vérifie-la dans les réglages.';
+      case 'no_credit': return 'Plus de crédit sur ton compte Claude : recharge-le sur platform.claude.com.';
+      case 'forbidden': return 'Cette clé n’a pas accès à ce modèle.';
+      case 'not_found': return 'Modèle introuvable : Kotoba a sans doute besoin d’une mise à jour.';
+      case 'rate_limited': return 'Trop de demandes d’un coup. Réessaie dans un moment.';
+      case 'overloaded': return 'Claude est surchargé. Réessaie dans un instant.';
+      case 'server': return 'Erreur chez Claude. Touche Réessayer.';
+      case 'network': return 'Pas de connexion. Vérifie le réseau puis touche Réessayer.';
+      case 'refused': return 'Claude n’a pas traduit ce texte. Reformule-le.';
+      case 'too_large': return 'Trop long ou trop lourd. Coupe le texte ou essaie une autre photo.';
+      case 'image_rejected': return 'Format de photo non pris en charge. Essaie une autre image.';
+      case 'photo_missing': return 'Photo introuvable. Reprends-la.';
+      case 'cancelled': return 'Traduction arrêtée.';
+      default: return 'La traduction a échoué. Touche Réessayer.';
+    }
+  }
+  const KEY_CODES = new Set(['no_key', 'bad_key', 'no_credit']);
+  function syncBanner() {
+    const msg = !getKey() ? 'Pour traduire, ajoute ta clé API Claude.' : (keyProblem ? copyFor(keyProblem) : '');
+    $('#bannerText').textContent = msg;
+    banner.hidden = !msg;
+  }
+
+  // ---------- Claude (Messages API, called straight from the phone with Ronan's key) ----------
+  const API = 'https://api.anthropic.com/v1/';
+  const MODEL_QUICK = 'claude-haiku-5-5';
+  const MODEL_CAREFUL = 'claude-sonnet-5-5';
+  // $ per million tokens (input, output): only used to show an estimate in the settings.
+  const PRICES = { [MODEL_QUICK]: [0.10, 0.50], [MODEL_CAREFUL]: [2, 10] };
+  const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+
+  function apiHeaders(key) {
+    return {
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    };
+  }
+  function apiErr(code, extra) {
+    const e = new Error(code);
+    e.api = true;
+    e.code = code;
+    return Object.assign(e, extra);
+  }
+  function errCode(status, err) {
+    const type = (err && err.type) || '';
+    const msg = (err && err.message) || '';
+    if (status === 401 || type === 'authentication_error') return 'bad_key';
+    if (status === 402 || type === 'billing_error' || /credit balance/i.test(msg)) return 'no_credit';
+    if (status === 403 || type === 'permission_error') return 'forbidden';
+    if (status === 404 || type === 'not_found_error') return 'not_found';
+    if (status === 413 || type === 'request_too_large') return 'too_large';
+    if (status === 429 || type === 'rate_limit_error') return 'rate_limited';
+    if (status === 529 || type === 'overloaded_error') return 'overloaded';
+    if (status >= 500 || type === 'api_error') return 'server';
+    if (/image/i.test(msg)) return 'image_rejected';
+    return 'failed';
+  }
+  // Streams one answer; onText gets the whole text so far and the new piece.
+  async function claude({ model, content, maxTokens, signal, onText }) {
+    const key = getKey();
+    if (!key) throw apiErr('no_key');
+    const headers = Object.assign({ 'content-type': 'application/json' }, apiHeaders(key));
+    const body = {
+      model,
+      max_tokens: maxTokens,
+      stream: true,
+      output_config: { effort: 'low' },
+      messages: [{ role: 'user', content }]
+    };
+    if (model === MODEL_CAREFUL) {
+      // If a safety filter declines, the API answers with another model instead of stopping.
+      body.fallbacks = 'default';
+      headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
+    }
+    let res;
+    try {
+      res = await fetch(API + 'messages', { method: 'POST', headers, body: JSON.stringify(body), signal });
+    } catch (e) {
+      throw apiErr(signal && signal.aborted ? 'cancelled' : 'network');
+    }
+    if (!res.ok) {
+      let err = null;
+      try { err = (await res.json()).error; } catch (e) {}
+      throw apiErr(errCode(res.status, err), { detail: (err && err.message) || '' });
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', text = '', stop = '', served = model, inTok = 0, outTok = 0;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true }).replace(/\r/g, '');
+        let k;
+        while ((k = buf.indexOf('\n\n')) >= 0) {
+          const data = buf.slice(0, k).split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim()).join('');
+          buf = buf.slice(k + 2);
+          if (!data) continue;
+          let ev;
+          try { ev = JSON.parse(data); } catch (e) { continue; }
+          if (ev.type === 'message_start' && ev.message) {
+            served = ev.message.model || served;
+            inTok = (ev.message.usage && ev.message.usage.input_tokens) || 0;
+          } else if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
+            text += ev.delta.text;
+            onText(text, ev.delta.text);
+          } else if (ev.type === 'message_delta') {
+            if (ev.delta && ev.delta.stop_reason) stop = ev.delta.stop_reason;
+            if (ev.usage) {
+              if (ev.usage.output_tokens) outTok = ev.usage.output_tokens;
+              if (ev.usage.input_tokens) inTok = ev.usage.input_tokens;
+            }
+          } else if (ev.type === 'error') {
+            throw apiErr(errCode(0, ev.error));
+          }
+        }
+      }
+    } catch (e) {
+      if (e && e.api) { e.text = text; throw e; }
+      throw apiErr(signal && signal.aborted ? 'cancelled' : 'network', { text });
+    }
+    addUsage(served, inTok, outTok);
+    if (stop === 'refusal') throw apiErr('refused', { text });
+    return { text, truncated: stop === 'max_tokens' };
+  }
+  // A free call that only checks the key.
+  async function testKey(key) {
+    try {
+      const res = await fetch(API + 'models?limit=1', { headers: apiHeaders(key) });
+      if (res.ok) return '';
+      let err = null;
+      try { err = (await res.json()).error; } catch (e) {}
+      return errCode(res.status, err);
+    } catch (e) { return 'network'; }
+  }
+
+  function loadUsage() {
+    try {
+      const u = JSON.parse(localStorage.getItem(KEY_USAGE) || 'null');
+      if (u && typeof u.cost === 'number' && typeof u.n === 'number') return u;
+    } catch (e) {}
+    return { since: Date.now(), n: 0, cost: 0 };
+  }
+  function addUsage(model, inTok, outTok) {
+    const p = PRICES[model] || PRICES[MODEL_CAREFUL];
+    const u = loadUsage();
+    u.n += 1;
+    u.cost += (inTok * p[0] + outTok * p[1]) / 1e6;
+    try { localStorage.setItem(KEY_USAGE, JSON.stringify(u)); } catch (e) {}
+  }
+
+  const LANG = { fr: 'French', ja: 'Japanese' };
+  function textPrompt(it) {
+    const toJa = it.tgt === 'ja';
+    const idx = state.items.indexOf(it);
+    const ctx = state.items.slice(0, idx < 0 ? state.items.length : idx)
+      .filter((x) => x.kind === 'text' && x.status === 'done' && x.tr)
+      .slice(-3)
+      .map((x) => '- ' + x.src.toUpperCase() + ': ' + x.text + '  →  ' + x.tgt.toUpperCase() + ': ' + x.tr)
+      .join('\n');
+    const lines = [
+      'You are an expert French ⇄ Japanese interpreter helping a French speaker in Japan talk with Japanese people.',
+      'Translate the text below from ' + LANG[it.src] + ' into ' + LANG[it.tgt] + '.',
+      '',
+      'Rules:',
+      '- Translate the meaning, not word by word: write what a native speaker would naturally say in this situation.',
+      '- Keep names, numbers, prices, times and the tone of the original.'
+    ];
+    if (toJa) lines.push(state.polite
+      ? '- Japanese register: polite です／ます form, right for strangers, shop and restaurant staff, colleagues.'
+      : '- Japanese register: casual plain form (タメ口), as between close friends.');
+    if (it.src === 'ja' && !JA_RE.test(it.text)) lines.push('- The source is Japanese written in rōmaji; read it as Japanese.');
+    if (it.spoken) lines.push('- The text comes from speech recognition: fix obvious recognition mistakes and missing punctuation silently.');
+    lines.push('', 'Output format, exactly, with nothing else (no quotes, no labels, no Markdown):', 'The translation.');
+    if (toJa && state.romaji) lines.push('Then a line containing only @@R, then the Hepburn rōmaji reading of your translation, with macrons (ō, ū).');
+    lines.push('Then, ONLY if there is an important nuance, ambiguity or cultural pitfall the French speaker should know about, a line containing only @@N, then one short sentence in French. Otherwise write nothing more.');
+    if (ctx) lines.push('', 'Earlier in this conversation (context only, do not translate):', ctx);
+    lines.push('', 'Text to translate:', '"""', it.text, '"""');
+    return lines.join('\n');
+  }
+  // Photo translation drawn over the original text, Google Lens style: Claude streams one JSON block per line.
+  function lensPrompt() {
+    return [
+      'This photo was taken in Japan by a French speaker who cannot read Japanese.',
+      'Translate the text visible in it into French, Google Lens style: each French translation will be drawn over the original text, inside the same box.',
+      '',
+      'Reply with one JSON object per line and nothing else: no Markdown, no code fence, no comments.',
+      'Line 1: {"title": "<what the photo shows, 2 to 6 words in French>"}',
+      'Then one line per text block, in reading order (top to bottom, then left to right):',
+      '{"b": [x0, y0, x1, y1], "o": "<original text>", "t": "<French translation>"}',
+      'b is the bounding box of the ORIGINAL text as integers from 0 to 1000 measured on the whole image: x goes from the left edge (0) to the right edge (1000), y from the top edge (0) to the bottom edge (1000). Keep each box tight around its text.',
+      '',
+      'Rules:',
+      '- One block = one line of text, or one cell, label or heading that belongs together. Never merge text that is far apart.',
+      '- Translate every text that is not French (Japanese, English, Chinese…). Skip lone numbers, times and prices, and text already in French: they stay visible on the photo.',
+      '- Keep translations short so they fit in about the same space. Write station and place names in rōmaji (e.g. Kinshichō).',
+      '- At most 80 blocks. If there is more text, keep what matters most to a traveller: titles, names, headings, instructions, warnings.'
+    ].join('\n');
+  }
+  function eatLensLine(it, raw) {
+    let ln = String(raw).trim().replace(/,\s*$/, '');
+    if (!ln || ln[0] !== '{') return false;
+    let o;
+    try { o = JSON.parse(ln); } catch (e) { return false; }
+    if (!o || typeof o !== 'object') return false;
+    if (typeof o.title === 'string') { it.title = o.title.trim(); return true; }
+    if (!Array.isArray(o.b) || o.b.length !== 4 || typeof o.t !== 'string' || !o.t.trim()) return false;
+    let b = o.b.map(Number);
+    if (b.some((v) => !isFinite(v))) return false;
+    if (Math.max.apply(null, b) <= 1.001) b = b.map((v) => v * 1000);
+    b = b.map((v) => Math.min(1000, Math.max(0, v)));
+    let [x0, y0, x1, y1] = b;
+    if (x1 < x0) [x0, x1] = [x1, x0];
+    if (y1 < y0) [y0, y1] = [y1, y0];
+    if (x1 - x0 < 6) x1 = Math.min(1000, x0 + 6);
+    if (y1 - y0 < 6) y1 = Math.min(1000, y0 + 6);
+    it.blocks.push({ b: [x0, y0, x1, y1].map(Math.round), o: typeof o.o === 'string' ? o.o.trim() : '', t: o.t.trim() });
+    return true;
+  }
+  function lensText(it) {
+    return (it.title ? it.title + '\n' : '') + (it.blocks || []).map((b) => (b.o ? b.o + ' → ' : '') + b.t).join('\n');
+  }
+  function finishLens(it, pendingLine) {
+    if (pendingLine && pendingLine.trim()) eatLensLine(it, pendingLine);
+    if (it.blocks.length) it.tr = lensText(it);
+    else it.tr = (it.raw || '').trim(); // Claude ignored the format: keep its text as a plain list
+  }
+  function parseOut(t) {
+    const o = { tr: '', ro: '', note: '' };
+    const re = /@@([RN])/g;
+    let cur = 'tr', last = 0, m;
+    while ((m = re.exec(t))) { o[cur] += t.slice(last, m.index); cur = m[1] === 'R' ? 'ro' : 'note'; last = re.lastIndex; }
+    o[cur] += t.slice(last).replace(/@{1,2}$/, '');
+    o.tr = o.tr.trim(); o.ro = o.ro.trim(); o.note = o.note.trim();
+    return o;
+  }
+  function applyText(it, text) {
+    if (it.kind === 'image') { it.tr = text.trim(); return; }
+    const o = parseOut(text);
+    it.tr = o.tr; it.ro = o.ro; it.note = o.note;
+  }
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).slice(String(r.result).indexOf(',') + 1));
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    });
+  }
+
+  async function run(it) {
+    if (busy) return;
+    busy = true;
+    setSending(true);
+    it.status = 'pending'; it.err = '';
+    if (it.kind === 'text') { it.tr = ''; it.ro = ''; it.note = ''; } else { it.tr = ''; it.blocks = []; it.title = ''; it.raw = ''; }
+    updateCard(it);
+    ctl = new AbortController();
+    const req = { signal: ctl.signal };
+    let lensPending = '';
+    try {
+      if (it.kind === 'image') {
+        const f = files.get(it.id);
+        if (!f) throw apiErr('photo_missing');
+        const type = f.type || 'image/jpeg';
+        if (!IMAGE_TYPES.includes(type)) throw apiErr('image_rejected');
+        const data = await blobToBase64(f);
+        req.model = MODEL_CAREFUL;
+        req.maxTokens = 8192;
+        req.content = [
+          { type: 'image', source: { type: 'base64', media_type: type, data } },
+          { type: 'text', text: lensPrompt() }
+        ];
+        req.onText = (text, delta) => {
+          it.raw = text;
+          const lines = (lensPending + delta).split('\n');
+          lensPending = lines.pop();
+          let added = false;
+          lines.forEach((l) => { if (eatLensLine(it, l)) added = true; });
+          if (added) { it.tr = lensText(it); lensProgress(it); }
+        };
+      } else {
+        req.model = state.tier === 'careful' ? MODEL_CAREFUL : MODEL_QUICK;
+        req.maxTokens = 2048;
+        req.content = textPrompt(it);
+        req.onText = (text) => { applyText(it, text); updateCard(it); };
+      }
+      const r = await claude(req);
+      if (it.kind === 'image') { it.raw = r.text; finishLens(it, lensPending); }
+      else applyText(it, r.text);
+      it.status = 'done';
+      if (keyProblem) { keyProblem = ''; syncBanner(); }
+      if (r.truncated && it.kind === 'text') it.note = (it.note ? it.note + ' ' : '') + '(Réponse coupée : texte trop long.)';
+    } catch (e) {
+      const code = (e && e.api && e.code) || 'failed';
+      if (code === 'refused') { it.tr = ''; it.ro = ''; it.note = ''; if (it.kind === 'image') { it.blocks = []; it.title = ''; } }
+      else if (it.kind === 'image') finishLens(it, lensPending);
+      else if (e && typeof e.text === 'string' && e.text) applyText(it, e.text);
+      if (code === 'cancelled') {
+        it.status = it.tr ? 'done' : 'error';
+        it.err = it.tr ? '' : copyFor(code);
+      } else {
+        it.status = 'error';
+        it.err = copyFor(code);
+        if (KEY_CODES.has(code)) { keyProblem = code === 'no_key' ? '' : code; syncBanner(); }
+      }
+    } finally {
+      busy = false; ctl = null;
+      setSending(false);
+      updateCard(it);
+      save();
+      if (queuedSrc) {
+        const src = queuedSrc;
+        queuedSrc = null;
+        if (ta.value.trim()) submit(src, true);
+      }
+    }
+  }
+
+  // ---------- rendering ----------
+  function dots() {
+    const d = el('span', 'dots');
+    d.setAttribute('aria-label', 'Traduction en cours');
+    d.append(el('i'), el('i'), el('i'));
+    return d;
+  }
+  function actBtn(act, label, on) {
+    const b = el('button', 'act' + (on ? ' on' : ''));
+    b.type = 'button';
+    b.dataset.act = act;
+    b.innerHTML = ICONS[act === 'fav' ? 'star' : act];
+    b.append(el('span', null, label));
+    if (act === 'fav') b.setAttribute('aria-pressed', String(!!on));
+    return b;
+  }
+  function imageBody(text) {
+    const wrap = el('div', 'rows');
+    text.split('\n').map((s) => s.replace(/^\s*[-*•]\s*/, '').trim()).filter(Boolean).forEach((ln, i) => {
+      const k = ln.indexOf('→');
+      if (k > 0) {
+        const r = el('div', 'row');
+        const o = el('span', 'orig', ln.slice(0, k).trim());
+        o.lang = 'ja';
+        r.append(o, el('span', 'trl', ln.slice(k + 1).trim()));
+        wrap.append(r);
+      } else {
+        wrap.append(el('p', i === 0 ? 'lead' : 'plain', ln));
+      }
+    });
+    return wrap;
+  }
+  function buildCard(it, example) {
+    const c = el('article', 'card' + (example ? ' example' : ''));
+    c.dataset.id = it.id;
+    if (example) c.append(el('span', 'badge', 'Exemple'));
+    const head = el('div', 'src');
+    const photo = it.kind === 'image' ? photoSrc(it) : '';
+    const asLens = it.kind === 'image' && photo && ((it.blocks && it.blocks.length) || !it.tr);
+    if (it.kind === 'image') {
+      head.append(el('span', 'tag ja', 'PHOTO'));
+      if (!asLens && it.thumb) { const img = new Image(); img.src = it.thumb; img.alt = 'Photo envoyée'; img.className = 'thumb'; head.append(img); }
+      head.append(el('p', 'ptitle', it.title || (it.status === 'pending' ? 'Lecture de la photo…' : 'Texte de la photo')));
+    } else {
+      head.append(el('span', 'tag ' + it.src, it.src === 'ja' ? 'JA' : 'FR'));
+      const p = el('p', null, it.text);
+      p.lang = it.src;
+      head.append(p);
+    }
+    c.append(head);
+    const out = el('div', 'out');
+    out.lang = it.kind === 'image' ? 'fr' : it.tgt;
+    if (it.kind === 'image') {
+      if (asLens) out.append(buildLens(it, photo));
+      else if (it.tr) out.append(imageBody(it.tr));
+    } else {
+      if (it.tr) out.append(el('p', 'tr', it.tr));
+      if (it.ro) { const r = el('p', 'ro', it.ro); r.lang = 'ja-Latn'; out.append(r); }
+      if (it.note) { const n = el('p', 'note', it.note); n.lang = 'fr'; out.append(n); }
+    }
+    if (it.status === 'pending' && !it.tr && !asLens) out.append(dots());
+    if (out.childNodes.length) c.append(out);
+    if (it.status === 'error') {
+      const e = el('div', 'err');
+      e.append(el('span', null, it.err || 'La traduction a échoué.'));
+      if (it.kind === 'text' || files.has(it.id)) {
+        const b = el('button', 'txt-btn', 'Réessayer');
+        b.type = 'button';
+        b.dataset.act = 'retry';
+        e.append(b);
+      }
+      c.append(e);
+    }
+    if (!example && it.status !== 'pending' && it.tr) {
+      const a = el('div', 'acts');
+      if (it.kind === 'text' && tts) a.append(actBtn('speak', 'Écouter'));
+      a.append(actBtn('copy', 'Copier'));
+      if (it.kind === 'text') a.append(actBtn('show', 'Montrer'));
+      a.append(actBtn('fav', it.fav ? 'Gardé' : 'Garder', it.fav));
+      c.append(a);
+    }
+    return c;
+  }
+  // ---------- photo translated in place ----------
+  const photoSrc = (it) => photoUrls.get(it.id) || it.photo || '';
+  const ro = 'ResizeObserver' in window ? new ResizeObserver((entries) => entries.forEach((en) => fitStage(en.target))) : null;
+  function fitOv(ov) {
+    const w = ov.clientWidth, h = ov.clientHeight;
+    const span = ov.firstChild;
+    if (w < 2 || h < 2 || !span) return;
+    let size = Math.min(48, Math.max(6, h * 0.78));
+    ov.style.fontSize = size + 'px';
+    let n = 0;
+    // shrink rather than break words: stop when the text fits the box both ways
+    while ((span.scrollWidth > span.clientWidth + 1 || span.offsetHeight > h + 1) && size > 6 && n++ < 24) {
+      size = Math.max(6, size * 0.88);
+      ov.style.fontSize = size + 'px';
+    }
+  }
+  function fitStage(st) { st.querySelectorAll('.ov').forEach(fitOv); }
+  function ovEl(b, i) {
+    const ov = el('button', 'ov');
+    ov.type = 'button';
+    ov.dataset.act = 'block';
+    ov.dataset.bi = String(i);
+    ov.style.left = b.b[0] / 10 + '%';
+    ov.style.top = b.b[1] / 10 + '%';
+    ov.style.width = (b.b[2] - b.b[0]) / 10 + '%';
+    ov.style.height = (b.b[3] - b.b[1]) / 10 + '%';
+    ov.setAttribute('aria-label', b.t);
+    ov.append(el('span', null, b.t));
+    return ov;
+  }
+  function buildStage(it, src, fill) {
+    const st = el('div', 'stage' + (it.status === 'pending' ? ' scan' : ''));
+    const r = it.w && it.h ? it.w / it.h : 0.75;
+    st.style.aspectRatio = r.toFixed(4);
+    if (!fill) st.style.width = 'min(100%, ' + (62 * r).toFixed(2) + 'vh)';
+    const img = new Image();
+    img.src = src;
+    img.alt = it.title || 'Photo';
+    img.decoding = 'async';
+    const layer = el('div', 'layer');
+    (it.blocks || []).forEach((b, i) => layer.append(ovEl(b, i)));
+    st.append(img, layer);
+    if (ro) ro.observe(st); else requestAnimationFrame(() => fitStage(st));
+    return st;
+  }
+  function lensStatus(it) {
+    const n = (it.blocks || []).length;
+    const s = n > 1 ? 's' : '';
+    if (it.status === 'pending') return n ? n + ' zone' + s + ' traduite' + s + '…' : 'Lecture de la photo…';
+    if (!n) return it.status === 'error' ? '' : 'Aucun texte à traduire trouvé.';
+    return n + ' zone' + s + ' · touche un texte pour le lire';
+  }
+  function buildLens(it, src) {
+    const wrap = el('div', 'lens');
+    wrap.append(buildStage(it, src, false));
+    const bar = el('div', 'lensbar');
+    bar.append(el('span', 'status', lensStatus(it)));
+    if (it.status !== 'pending' && it.blocks && it.blocks.length) {
+      const o = el('button', 'chip', 'Original');
+      o.type = 'button'; o.dataset.act = 'orig'; o.setAttribute('aria-pressed', 'false');
+      const f = el('button', 'txt-btn', 'Plein écran');
+      f.type = 'button'; f.dataset.act = 'lens';
+      bar.append(o, f);
+    }
+    wrap.append(bar);
+    if (it.status !== 'pending' && it.blocks && it.blocks.length) {
+      const d = el('details', 'found');
+      d.append(el('summary', null, 'Texte détecté (' + it.blocks.length + ')'));
+      d.append(imageBody('\n' + it.blocks.map((b) => (b.o ? b.o + ' → ' : '') + b.t).join('\n')));
+      wrap.append(d);
+    }
+    return wrap;
+  }
+  // While Claude streams, add each new block to the photo without rebuilding the card.
+  function lensProgress(it) {
+    const card = thread.querySelector('.card[data-id="' + it.id + '"]');
+    const layer = card && card.querySelector('.layer');
+    if (!layer) { updateCard(it); return; }
+    for (let i = layer.children.length; i < it.blocks.length; i++) {
+      const ov = ovEl(it.blocks[i], i);
+      layer.append(ov);
+      fitOv(ov);
+    }
+    const st = card.querySelector('.lensbar .status');
+    if (st) st.textContent = lensStatus(it);
+    const t = card.querySelector('.ptitle');
+    if (t && it.title) t.textContent = it.title;
+  }
+
+  function updateCard(it) {
+    const old = thread.querySelector('.card[data-id="' + it.id + '"]');
+    if (!old) return;
+    const pin = nearBottom();
+    old.replaceWith(buildCard(it));
+    if (pin) toBottom();
+  }
+  function render() {
+    thread.textContent = '';
+    if (!state.items.length && !state.favOnly) {
+      thread.append(el('p', 'intro', stt
+        ? 'Touche « Parler français » ou « 日本語で話す » et parle : la traduction arrive toute seule à la fin de la phrase. Tu peux aussi écrire, ou prendre en photo un menu ou un panneau.'
+        : 'Écris ou dicte une phrase, ou prends en photo un menu ou un panneau : la traduction s’affiche directement sur l’image. Le japonais est reconnu tout seul.'));
+      EXAMPLES.forEach((x) => thread.append(buildCard(x, true)));
+      return;
+    }
+    const list = state.favOnly ? state.items.filter((i) => i.fav) : state.items;
+    if (!list.length) {
+      thread.append(el('p', 'intro', 'Aucun favori pour l’instant. Touche « Garder » sous une traduction pour la retrouver ici.'));
+      return;
+    }
+    list.forEach((it) => thread.append(buildCard(it)));
+    if (state.favOnly) thread.scrollTop = 0; else toBottom();
+  }
+  function setSending(on) {
+    sendBtn.innerHTML = on ? ICONS.stop : ICONS.send;
+    sendBtn.classList.toggle('stop', on);
+    sendBtn.setAttribute('aria-label', on ? 'Arrêter' : 'Traduire');
+  }
+  function syncPrefs() {
+    document.querySelectorAll('[data-pref]').forEach((b) => {
+      const v = b.dataset.pref === 'tier' ? state.tier : (state.polite ? '1' : '0');
+      b.setAttribute('aria-pressed', String(b.dataset.val === v));
+    });
+    romajiBtn.setAttribute('aria-pressed', String(state.romaji));
+    favBtn.setAttribute('aria-pressed', String(state.favOnly));
+    ta.lang = state.speaker;
+    sendBtn.classList.toggle('ja', state.speaker === 'ja');
+    syncMic();
+  }
+  function autosize() {
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight + 2, 150) + 'px';
+  }
+
+  // ---------- speech output ----------
+  const webTts = 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
+  const tts = !!NATIVE || webTts;
+  let voices = [];
+  function loadVoices() { try { voices = window.speechSynthesis.getVoices() || []; } catch (e) { voices = []; } }
+  if (!NATIVE && webTts) { loadVoices(); try { window.speechSynthesis.addEventListener('voiceschanged', loadVoices); } catch (e) {} }
+  function speak(text, lang) {
+    if (!text) return;
+    if (NATIVE) { try { NATIVE.speak(text, lang); } catch (e) {} return; }
+    if (!webTts) return;
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = lang === 'ja' ? 'ja-JP' : 'fr-FR';
+      const v = voices.find((x) => (x.lang || '').toLowerCase().replace('_', '-').startsWith(lang));
+      if (v) u.voice = v;
+      u.rate = lang === 'ja' ? 0.92 : 1;
+      window.speechSynthesis.speak(u);
+    } catch (e) { toast('Lecture audio indisponible ici.'); }
+  }
+  function stopSpeaking() {
+    try { if (NATIVE) NATIVE.stopSpeaking(); else if (webTts) window.speechSynthesis.cancel(); } catch (e) {}
+  }
+
+  // ---------- speech input: one microphone key per language ----------
+  // Both engines report through onSpeech: ready, partial {text}, final {text}, error {code}.
+  const stt = (() => {
+    try {
+      if (NATIVE && NATIVE.canListen()) {
+        return {
+          start: (lang) => NATIVE.startListening(lang),
+          stop: () => NATIVE.stopListening(),
+          cancel: () => NATIVE.cancelListening()
+        };
+      }
+    } catch (e) {}
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return null;
+    let rec = null;
+    return {
+      start(lang) {
+        const r = new SR();
+        rec = r;
+        let finals = '', interim = '', failed = false;
+        r.lang = lang;
+        r.interimResults = true;
+        r.continuous = false;
+        r.maxAlternatives = 1;
+        r.onstart = () => { if (rec === r) onSpeech({ type: 'ready' }); };
+        r.onresult = (e) => {
+          finals = ''; interim = '';
+          for (let i = 0; i < e.results.length; i++) {
+            if (e.results[i].isFinal) finals += e.results[i][0].transcript; else interim += e.results[i][0].transcript;
+          }
+          if (rec === r) onSpeech({ type: 'partial', text: finals + interim });
+        };
+        r.onerror = (e) => {
+          if (e.error === 'aborted' || rec !== r) return;
+          if (e.error === 'no-speech' && (finals || interim)) return;
+          failed = true;
+          onSpeech({ type: 'error', code: e.error });
+        };
+        r.onend = () => { if (rec === r && !failed) onSpeech({ type: 'final', text: finals || interim }); rec = rec === r ? null : rec; };
+        r.start();
+      },
+      stop() { if (rec) rec.stop(); },
+      cancel() { const r = rec; rec = null; if (r) r.abort(); }
+    };
+  })();
+
+  const MIC_IDLE = { fr: 'Parler français', ja: '日本語で話す' };
+  const MIC_ON = { fr: 'J’écoute…', ja: '聞いています…' };
+  function syncMic() {
+    micBtns.forEach((b) => {
+      const lang = b.dataset.mic;
+      const on = !!listening && listening.lang === lang;
+      b.classList.toggle('listening', on);
+      b.setAttribute('aria-pressed', String(on));
+      b.setAttribute('aria-label', on ? (lang === 'ja' ? '聞き取りを終える' : 'Arrêter l’écoute') : MIC_IDLE[lang]);
+      b.querySelector('.ico').innerHTML = on ? ICONS.stop : ICONS.mic;
+      b.querySelector('.lbl').textContent = on ? MIC_ON[lang] : MIC_IDLE[lang];
+    });
+    ta.readOnly = !!listening;
+    ta.placeholder = listening
+      ? (listening.lang === 'ja' ? '話してください…' : 'Parle, la phrase s’affiche ici…')
+      : (state.speaker === 'ja' ? 'ここに入力' : 'Écris ici');
+  }
+  // Without speech recognition, point at the keyboard's own microphone key.
+  function keyboardDictation(lang) {
+    const changed = state.speaker !== lang;
+    state.speaker = lang; syncPrefs(); save();
+    if (changed && document.activeElement === ta) ta.blur();
+    setTimeout(() => ta.focus(), changed ? 80 : 0);
+    toast(lang === 'ja' ? 'キーボードのマイクをタップして話してください' : 'Touche le micro de ton clavier et parle');
+  }
+  function toggleMic(lang) {
+    if (listening) {
+      if (listening.lang === lang) { stt.stop(); return; } // finish the sentence: it gets translated
+      cancelListening();
+    }
+    if (!stt) { keyboardDictation(lang); return; }
+    if (!getKey()) { syncBanner(); openSettings('Ajoute d’abord ta clé API Claude.'); return; }
+    stopSpeaking();
+    if (document.activeElement === ta) ta.blur();
+    state.speaker = lang;
+    listening = { lang, text: '' };
+    ta.value = '';
+    autosize();
+    syncPrefs(); save();
+    try { stt.start(lang === 'ja' ? 'ja-JP' : 'fr-FR'); }
+    catch (e) { listening = null; syncMic(); toast('La dictée n’a pas pu démarrer.'); }
+  }
+  function cancelListening() {
+    if (!listening) return;
+    listening = null;
+    try { stt.cancel(); } catch (e) {}
+    syncMic();
+  }
+  function micError(code, lang) {
+    switch (code) {
+      case 'no-speech':
+      case 'no-match': return lang === 'ja' ? '聞き取れませんでした。もう一度どうぞ。' : 'Je n’ai rien entendu. Réessaie.';
+      case 'not-allowed':
+      case 'service-not-allowed': return 'Autorise le micro pour Kotoba (Réglages Android > Applis > Kotoba > Autorisations).';
+      case 'network': return 'Dictée impossible : pas de réseau.';
+      case 'language-not-supported': return 'Langue indisponible pour la dictée sur ce téléphone.';
+      case 'audio-capture': return 'Micro indisponible : une autre appli l’utilise peut-être.';
+      case 'busy': return 'Le micro est occupé. Réessaie dans un instant.';
+      default: return 'La dictée a échoué. Réessaie.';
+    }
+  }
+  function onSpeech(ev) {
+    if (!listening || !ev) return;
+    if (ev.type === 'partial') {
+      listening.text = ev.text || '';
+      ta.value = listening.text;
+      autosize();
+    } else if (ev.type === 'final' || ev.type === 'error') {
+      const lang = listening.lang;
+      const text = ((ev.type === 'final' && ev.text) || '').trim();
+      listening = null;
+      syncMic();
+      if (ev.type === 'error' || !text) {
+        ta.value = '';
+        autosize();
+        toast(micError(ev.type === 'error' ? ev.code : 'no-speech', lang), 3200);
+        return;
+      }
+      ta.value = text;
+      autosize();
+      if (busy) { queuedSrc = lang; toast('Traduction de la phrase précédente en cours…'); return; }
+      submit(lang, true);
+    }
+  }
+  // Called by the Android app: kotobaNative.speech({ type, text, code })
+  window.kotobaNative = { speech: onSpeech };
+
+  // ---------- actions ----------
+  function addItem(it) {
+    const reRender = !state.items.length || state.favOnly;
+    state.items.push(it);
+    trimItems();
+    if (state.favOnly) { state.favOnly = false; syncPrefs(); }
+    if (reRender) render(); else { thread.append(buildCard(it)); toBottom(); }
+  }
+  // forcedSrc: the language of the microphone key, when the text was dictated.
+  function submit(forcedSrc, spoken) {
+    if (busy) return;
+    const text = ta.value.trim();
+    if (!text) { ta.focus(); return; }
+    if (!getKey()) { syncBanner(); openSettings('Ajoute d’abord ta clé API Claude.'); return; }
+    const src = forcedSrc || detectSrc(text);
+    const it = { id: newId(), kind: 'text', src, tgt: src === 'ja' ? 'fr' : 'ja', text, tr: '', ro: '', note: '', fav: false, ts: Date.now(), status: 'pending' };
+    if (spoken) it.spoken = true;
+    addItem(it);
+    ta.value = '';
+    autosize();
+    run(it);
+  }
+  function copyItem(it, card) {
+    const fallback = () => {
+      const t = card.querySelector('.tr, .rows');
+      if (!t) return;
+      try {
+        const r = document.createRange(); r.selectNodeContents(t);
+        const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+        toast('Texte sélectionné : copie-le avec le menu.');
+      } catch (e) {}
+    };
+    if (NATIVE) {
+      // Android 13+ shows its own "copied" notice.
+      try { if (!NATIVE.copy(it.tr)) toast('Copié'); } catch (e) { fallback(); }
+      return;
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(it.tr).then(() => toast('Copié'), fallback);
+      else fallback();
+    } catch (e) { fallback(); }
+  }
+  let shown = null;
+  function openShow(it) {
+    shown = it;
+    const tr = $('#showTr'), ro = $('#showRo');
+    tr.textContent = it.tr; tr.lang = it.tgt;
+    ro.textContent = it.ro || ''; ro.hidden = !it.ro;
+    $('#showFrom').textContent = it.tgt === 'ja' ? 'フランス語から翻訳しました' : 'Traduit du japonais';
+    const sp = $('#showSpeak');
+    sp.hidden = !tts;
+    sp.innerHTML = ICONS.speak;
+    sp.append(el('span', null, it.tgt === 'ja' ? '読み上げる' : 'Écouter'));
+    showEl.hidden = false;
+    $('#closeShow').focus();
+  }
+  function closeShow() { showEl.hidden = true; shown = null; }
+
+  thread.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const card = b.closest('.card');
+    const it = card && state.items.find((i) => i.id === card.dataset.id);
+    if (!it) return;
+    const act = b.dataset.act;
+    if (act === 'speak') speak(it.tr, it.tgt);
+    else if (act === 'copy') copyItem(it, card);
+    else if (act === 'show') openShow(it);
+    else if (act === 'block') openSheet(it, Number(b.dataset.bi));
+    else if (act === 'orig') {
+      const st = card.querySelector('.stage');
+      if (st) b.setAttribute('aria-pressed', String(st.classList.toggle('orig')));
+    }
+    else if (act === 'lens') openLens(it);
+    else if (act === 'fav') {
+      it.fav = !it.fav; save();
+      if (state.favOnly && !it.fav) render(); else updateCard(it);
+      toast(it.fav ? 'Gardé dans les favoris' : 'Retiré des favoris');
+    } else if (act === 'retry') {
+      if (busy) { toast('Une traduction est déjà en cours.'); return; }
+      if (!getKey()) { openSettings('Ajoute d’abord ta clé API Claude.'); return; }
+      run(it);
+    }
+  });
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (busy) { if (ctl) ctl.abort(); return; }
+    if (listening) { stt.stop(); return; }
+    submit();
+  });
+  // Tapping send keeps the keyboard open for the next sentence.
+  sendBtn.addEventListener('pointerdown', (e) => { if (document.activeElement === ta) e.preventDefault(); });
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      if (!busy && !listening) submit();
+    }
+  });
+  ta.addEventListener('input', autosize);
+
+  micBtns.forEach((b) => b.addEventListener('click', () => toggleMic(b.dataset.mic)));
+  document.querySelectorAll('[data-pref]').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.pref === 'tier') state.tier = b.dataset.val; else state.polite = b.dataset.val === '1';
+    syncPrefs(); save();
+  }));
+  romajiBtn.addEventListener('click', () => { state.romaji = !state.romaji; syncPrefs(); save(); });
+  favBtn.addEventListener('click', () => { state.favOnly = !state.favOnly; syncPrefs(); render(); });
+  clearBtn.addEventListener('click', () => { confirmBar.hidden = !confirmBar.hidden; });
+  $('#cancelClear').addEventListener('click', () => { confirmBar.hidden = true; });
+  $('#doClear').addEventListener('click', () => {
+    if (busy && ctl) ctl.abort();
+    state.items.filter((i) => !i.fav).forEach((i) => forgetPhoto(i.id));
+    state.items = state.items.filter((i) => i.fav);
+    confirmBar.hidden = true;
+    save(); render();
+    toast('Historique effacé');
+  });
+
+  // Each label opens its own picker natively (more reliable in web views than a scripted click):
+  // the camera input asks for the rear camera, the gallery input for an existing photo.
+  photoPickers.forEach(([btn, input]) => {
+    btn.addEventListener('click', (e) => {
+      if (busy) { e.preventDefault(); toast('Attends la fin de la traduction en cours.'); return; }
+      if (!getKey()) { e.preventDefault(); openSettings('Ajoute d’abord ta clé API Claude.'); return; }
+      cancelListening();
+      input.value = '';
+    });
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); btn.click(); }
+    });
+    input.addEventListener('change', () => {
+      const f = input.files && input.files[0];
+      if (f) handlePhoto(f);
+    });
+  });
+  function canvasFor(bmp, max) {
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(bmp.width * k));
+    cv.height = Math.max(1, Math.round(bmp.height * k));
+    cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+    return cv;
+  }
+  // Re-encode every photo as a reasonably sized JPEG: phone photos can be large or in formats Claude refuses.
+  async function prepareImage(file) {
+    let bmp;
+    try { bmp = await createImageBitmap(file); } catch (e) { return { blob: file, thumb: '', photo: '', w: 0, h: 0 }; }
+    try {
+      const big = canvasFor(bmp, 1568);
+      const blob = await new Promise((res) => big.toBlob((b) => res(b), 'image/jpeg', 0.85));
+      const photo = canvasFor(bmp, 1000).toDataURL('image/jpeg', 0.72);
+      const thumb = canvasFor(bmp, 160).toDataURL('image/jpeg', 0.7);
+      return { blob: blob || file, thumb, photo, w: big.width, h: big.height };
+    } catch (e) { return { blob: file, thumb: '', photo: '', w: 0, h: 0 }; }
+    finally { try { bmp.close(); } catch (e) {} }
+  }
+  async function handlePhoto(f) {
+    if (busy) { toast('Attends la fin de la traduction en cours.'); return; }
+    const it = { id: newId(), kind: 'image', src: 'ja', tgt: 'fr', text: '', tr: '', ro: '', note: '', fav: false, ts: Date.now(), status: 'pending', thumb: '', photo: '', w: 0, h: 0, title: '', blocks: [] };
+    addItem(it);
+    const img = await prepareImage(f);
+    it.thumb = img.thumb;
+    it.photo = img.photo;
+    it.w = img.w; it.h = img.h;
+    try { photoUrls.set(it.id, URL.createObjectURL(img.blob)); } catch (e) {}
+    if (img.blob.size > 3.7 * 1024 * 1024) {
+      it.status = 'error'; it.err = 'Photo trop lourde. Essaie une image plus petite.';
+      updateCard(it); save();
+      return;
+    }
+    files.set(it.id, img.blob);
+    run(it);
+  }
+
+  $('#closeShow').addEventListener('click', closeShow);
+  $('#showSpeak').addEventListener('click', () => { if (shown) speak(shown.tr, shown.tgt); });
+
+  // ---------- settings ----------
+  function setKeyStatus(msg, kind) {
+    keyStatus.textContent = msg;
+    keyStatus.className = 'key-status' + (kind ? ' ' + kind : '');
+  }
+  function renderUsage() {
+    const u = loadUsage();
+    const money = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: u.cost < 1 ? 3 : 2 }).format(u.cost);
+    const since = new Date(u.since).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    $('#usageText').textContent = 'Environ ' + money + ' depuis le ' + since + ' (' + u.n + ' traduction' + (u.n > 1 ? 's' : '') + '). Estimation : le montant exact est sur platform.claude.com.';
+  }
+  function openSettings(msg) {
+    cancelListening();
+    keyInput.value = getKey();
+    keyInput.type = 'password';
+    $('#keyShow').textContent = 'Afficher';
+    if (msg) setKeyStatus(msg, 'bad');
+    else if (keyProblem) setKeyStatus(copyFor(keyProblem), 'bad');
+    else setKeyStatus(getKey() ? 'Clé enregistrée sur ce téléphone.' : '', getKey() ? 'ok' : '');
+    renderUsage();
+    settingsEl.hidden = false;
+    if (!getKey()) setTimeout(() => keyInput.focus(), 60);
+  }
+  function closeSettings() { settingsEl.hidden = true; if (document.activeElement === keyInput) keyInput.blur(); }
+  async function saveKey() {
+    const k = keyInput.value.replace(/\s+/g, '');
+    if (!k) { setKeyStatus('Colle ta clé dans le champ.', 'bad'); return; }
+    setKey(k);
+    keyInput.value = k;
+    keyProblem = '';
+    syncBanner();
+    const btn = $('#keySave');
+    btn.disabled = true;
+    setKeyStatus('Test de la clé…');
+    const code = await testKey(k);
+    btn.disabled = false;
+    if (getKey() !== k) return;
+    if (!code) { setKeyStatus('Clé valide ✓ Tu peux traduire.', 'ok'); return; }
+    if (code === 'bad_key') { keyProblem = code; syncBanner(); setKeyStatus('Clé refusée : vérifie que tu l’as copiée en entier.', 'bad'); return; }
+    setKeyStatus('Clé enregistrée, mais le test a échoué : ' + copyFor(code), 'bad');
+  }
+  setBtn.addEventListener('click', () => openSettings());
+  $('#bannerBtn').addEventListener('click', () => openSettings());
+  $('#closeSettings').addEventListener('click', closeSettings);
+  $('#keySave').addEventListener('click', saveKey);
+  keyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveKey(); } });
+  $('#keyShow').addEventListener('click', () => {
+    const hide = keyInput.type === 'text';
+    keyInput.type = hide ? 'password' : 'text';
+    $('#keyShow').textContent = hide ? 'Afficher' : 'Masquer';
+  });
+  $('#keyDelete').addEventListener('click', () => {
+    setKey('');
+    keyInput.value = '';
+    keyProblem = '';
+    syncBanner();
+    setKeyStatus('Clé supprimée de ce téléphone.');
+  });
+  $('#usageReset').addEventListener('click', () => {
+    try { localStorage.removeItem(KEY_USAGE); } catch (e) {}
+    renderUsage();
+  });
+  try { $('#version').textContent = 'Kotoba ' + (NATIVE ? NATIVE.version() : 'web'); } catch (e) {}
+
+  // ---------- one block in detail ----------
+  let sheetBlock = null;
+  function openSheet(it, i) {
+    const b = it.blocks && it.blocks[i];
+    if (!b) return;
+    sheetBlock = b;
+    $('#sheetO').textContent = b.o || '';
+    $('#sheetO').hidden = !b.o;
+    $('#sheetT').textContent = b.t;
+    $('#sheetSpeak').hidden = !tts || !b.o;
+    sheet.hidden = false;
+  }
+  function closeSheet() { sheet.hidden = true; sheetBlock = null; }
+  $('#sheetClose').addEventListener('click', closeSheet);
+  $('#sheetSpeak').addEventListener('click', () => { if (sheetBlock) speak(sheetBlock.o, 'ja'); });
+
+  // ---------- full-screen photo with zoom ----------
+  const ZOOMS = [1, 1.5, 2, 3, 4];
+  let lvItem = null, lvZoom = 1;
+  function layoutLens() {
+    if (!lvItem) return;
+    const r = lvItem.w && lvItem.h ? lvItem.w / lvItem.h : 0.75;
+    const base = Math.min(lvScroll.clientWidth, lvScroll.clientHeight * r);
+    lvWrap.style.width = Math.max(1, Math.round(base * lvZoom)) + 'px';
+    $('#lvLevel').textContent = '×' + lvZoom;
+  }
+  function setZoom(z) {
+    const sc = lvScroll;
+    const cx = (sc.scrollLeft + sc.clientWidth / 2) / Math.max(1, sc.scrollWidth);
+    const cy = (sc.scrollTop + sc.clientHeight / 2) / Math.max(1, sc.scrollHeight);
+    lvZoom = z;
+    layoutLens();
+    sc.scrollLeft = cx * sc.scrollWidth - sc.clientWidth / 2;
+    sc.scrollTop = cy * sc.scrollHeight - sc.clientHeight / 2;
+  }
+  function openLens(it) {
+    const src = photoSrc(it);
+    if (!src) return;
+    lvItem = it; lvZoom = 1;
+    $('#lvTitle').textContent = it.title || 'Photo traduite';
+    lvOrig.setAttribute('aria-pressed', 'false');
+    lvWrap.textContent = '';
+    lvWrap.append(buildStage(it, src, true));
+    lensView.hidden = false;
+    darkBars(true);
+    layoutLens();
+    lvScroll.scrollTop = 0; lvScroll.scrollLeft = 0;
+    $('#lvClose').focus();
+  }
+  function closeLens() { closeSheet(); lensView.hidden = true; lvItem = null; lvWrap.textContent = ''; darkBars(false); }
+  $('#lvClose').addEventListener('click', closeLens);
+  $('#lvIn').addEventListener('click', () => { const k = ZOOMS.indexOf(lvZoom); if (k < ZOOMS.length - 1) setZoom(ZOOMS[k + 1]); });
+  $('#lvOut').addEventListener('click', () => { const k = ZOOMS.indexOf(lvZoom); if (k > 0) setZoom(ZOOMS[k - 1]); });
+  lvOrig.addEventListener('click', () => {
+    const st = lvWrap.querySelector('.stage');
+    if (st) lvOrig.setAttribute('aria-pressed', String(st.classList.toggle('orig')));
+  });
+  lvWrap.addEventListener('click', (e) => {
+    const ov = e.target.closest('.ov');
+    if (ov && lvItem) openSheet(lvItem, Number(ov.dataset.bi));
+  });
+  window.addEventListener('resize', () => { if (lvItem) layoutLens(); });
+
+  // ---------- Android window ----------
+  // The page draws under the status and navigation bars; the app tells it how tall they are (CSS px).
+  function setInsets(top, bottom) {
+    const root = document.documentElement.style;
+    root.setProperty('--inset-top', (Number(top) || 0) + 'px');
+    root.setProperty('--inset-bottom', (Number(bottom) || 0) + 'px');
+  }
+  // Light status bar icons over the dark photo viewer.
+  function darkBars(on) { try { if (NATIVE) NATIVE.darkBars(on); } catch (e) {} }
+  window.kotobaInsets = setInsets;
+  if (NATIVE) { try { const v = JSON.parse(NATIVE.insets()); setInsets(v[0], v[1]); } catch (e) {} }
+
+  // Android back button (MainActivity) and Escape: close the top layer; false lets the app go to the background.
+  function back() {
+    if (!sheet.hidden) closeSheet();
+    else if (!lensView.hidden) closeLens();
+    else if (!showEl.hidden) closeShow();
+    else if (!settingsEl.hidden) closeSettings();
+    else if (listening) cancelListening();
+    else if (!confirmBar.hidden) confirmBar.hidden = true;
+    else return false;
+    return true;
+  }
+  window.kotobaBack = back;
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') back(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelListening(); stopSpeaking(); } });
+
+  // ---------- start ----------
+  load();
+  setSending(false);
+  syncPrefs();
+  syncBanner();
+  render();
+})();

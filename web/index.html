@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' blob: data:; connect-src https://api.anthropic.com">
+<meta name="theme-color" content="#F2F3F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E1120" media="(prefers-color-scheme: dark)">
+<title>Kotoba</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@800&text=%E8%A8%80%E8%91%89&display=swap">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <header class="top band">
+    <div class="brandrow">
+      <span class="seal" aria-hidden="true"><span><b>言</b><b>葉</b></span></span>
+      <div class="brand"><span class="name">Kotoba</span><span class="pair">Français ⇄ <span lang="ja">日本語</span></span></div>
+      <span class="spacer"></span>
+      <button id="favBtn" class="icon-btn" type="button" aria-pressed="false" aria-label="Afficher seulement les favoris"></button>
+      <button id="clearBtn" class="icon-btn" type="button" aria-label="Effacer l’historique"></button>
+      <button id="setBtn" class="icon-btn" type="button" aria-label="Réglages"></button>
+    </div>
+    <div id="confirm" class="confirm" hidden>
+      <span>Effacer l’historique ? Les favoris restent.</span>
+      <span class="spacer"></span>
+      <button id="cancelClear" class="txt-btn" type="button">Annuler</button>
+      <button id="doClear" class="txt-btn danger" type="button">Effacer</button>
+    </div>
+    <div class="prefs" role="group" aria-label="Réglages de traduction">
+      <div class="seg" role="group" aria-label="Vitesse de traduction">
+        <button type="button" id="tierQuick" data-pref="tier" data-val="quick">Rapide</button>
+        <button type="button" id="tierCareful" data-pref="tier" data-val="careful">Soigné</button>
+      </div>
+      <div class="seg" role="group" aria-label="Registre du japonais">
+        <button type="button" id="regPolite" data-pref="polite" data-val="1">Poli</button>
+        <button type="button" id="regCasual" data-pref="polite" data-val="0">Familier</button>
+      </div>
+      <button type="button" id="romajiBtn" class="chip" aria-pressed="true">Rōmaji</button>
+    </div>
+  </header>
+
+  <main id="thread" class="thread band"></main>
+
+  <footer class="composer band">
+    <div id="banner" class="banner" hidden>
+      <span id="bannerText"></span>
+      <button id="bannerBtn" class="txt-btn" type="button">Réglages</button>
+    </div>
+    <div class="speakers" role="group" aria-label="Dicter">
+      <button type="button" class="spk fr" data-mic="fr" aria-pressed="false"><span class="ico"></span><span class="lbl">Parler français</span></button>
+      <button type="button" class="spk ja" data-mic="ja" aria-pressed="false" lang="ja"><span class="ico"></span><span class="lbl">日本語で話す</span></button>
+    </div>
+    <form id="form" class="field" autocomplete="off">
+      <label id="cameraBtn" class="round photo" for="cameraInput" role="button" tabindex="0" aria-label="Prendre une photo"></label>
+      <input id="cameraInput" class="vh" type="file" accept="image/*" capture="environment" tabindex="-1">
+      <label id="galleryBtn" class="round photo" for="galleryInput" role="button" tabindex="0" aria-label="Choisir une photo dans la galerie"></label>
+      <input id="galleryInput" class="vh" type="file" accept="image/*" tabindex="-1">
+      <textarea id="src" rows="1" enterkeyhint="send" aria-label="Texte à traduire"></textarea>
+      <button type="submit" id="sendBtn" class="round send" aria-label="Traduire"></button>
+    </form>
+  </footer>
+</div>
+
+<div id="show" class="show" role="dialog" aria-modal="true" aria-label="Traduction en grand" hidden>
+  <button id="closeShow" class="icon-btn close" type="button" aria-label="Fermer"></button>
+  <div class="big">
+    <p id="showFrom" class="from"></p>
+    <p id="showTr" class="bigtr"></p>
+    <p id="showRo" class="bigro"></p>
+  </div>
+  <div class="showacts"><button id="showSpeak" class="txt-btn" type="button"></button></div>
+</div>
+
+<div id="settings" class="panel" role="dialog" aria-modal="true" aria-labelledby="setTitle" hidden>
+  <div class="panel-bar band">
+    <h2 id="setTitle">Réglages</h2>
+    <button id="closeSettings" class="icon-btn" type="button" aria-label="Fermer"></button>
+  </div>
+  <div class="panel-body band">
+    <section class="set-block">
+      <h3>Clé API Claude</h3>
+      <p class="hint">Kotoba appelle Claude directement avec ta clé. Elle reste seulement sur ce téléphone.</p>
+      <div class="keyrow">
+        <input id="keyInput" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk-ant-…" aria-label="Clé API">
+        <button id="keyShow" class="txt-btn" type="button">Afficher</button>
+      </div>
+      <div class="set-acts">
+        <button id="keyDelete" class="txt-btn" type="button">Supprimer</button>
+        <button id="keySave" class="txt-btn primary" type="button">Enregistrer et tester</button>
+      </div>
+      <p id="keyStatus" class="key-status" role="status"></p>
+      <ol class="steps">
+        <li>Ouvre <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">platform.claude.com</a> et connecte-toi (même compte que Claude).</li>
+        <li><a href="https://platform.claude.com/settings/billing" target="_blank" rel="noopener">Billing</a> : ajoute un peu de crédit. 5 $ suffisent pour des milliers de phrases.</li>
+        <li>API Keys : « Create Key », copie la clé et colle-la ci-dessus.</li>
+      </ol>
+      <p class="hint">C’est facturé à l’usage, à part de ton abonnement Claude.</p>
+    </section>
+    <section class="set-block">
+      <h3>Consommation</h3>
+      <p id="usageText" class="hint"></p>
+      <div class="set-acts"><button id="usageReset" class="txt-btn" type="button">Remettre à zéro</button></div>
+    </section>
+    <section class="set-block">
+      <h3>Modèles</h3>
+      <p class="hint">Rapide : Claude Haiku 5.5. Soigné et photos : Claude Sonnet 5.5.</p>
+    </section>
+    <p id="version" class="hint version"></p>
+  </div>
+</div>
+
+<div id="lensView" class="lensview" role="dialog" aria-modal="true" aria-label="Photo traduite" hidden>
+  <div class="lv-bar">
+    <button id="lvClose" class="icon-btn" type="button" aria-label="Fermer"></button>
+    <p id="lvTitle" class="lv-title"></p>
+    <button id="lvOrig" class="chip" type="button" aria-pressed="false">Original</button>
+  </div>
+  <div id="lvScroll" class="lv-scroll"><div id="lvWrap" class="lv-wrap"></div></div>
+  <p class="lv-hint">Touche un texte pour le lire en entier.</p>
+  <div class="lv-zoom">
+    <button id="lvOut" type="button" aria-label="Dézoomer">−</button>
+    <span id="lvLevel">×1</span>
+    <button id="lvIn" type="button" aria-label="Zoomer">+</button>
+  </div>
+</div>
+
+<div id="sheet" class="sheet" role="dialog" aria-label="Texte traduit" hidden>
+  <div class="sheet-in band">
+    <p id="sheetO" class="sheet-o" lang="ja"></p>
+    <p id="sheetT" class="sheet-t" lang="fr"></p>
+    <div class="sheet-acts">
+      <button id="sheetSpeak" class="txt-btn" type="button">Écouter le japonais</button>
+      <button id="sheetClose" class="txt-btn" type="button">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
