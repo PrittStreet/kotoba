@@ -114,6 +114,11 @@
       <label class="range-row" for="silenceInput"><span>Fin de la dictée après un silence de</span><output id="silenceOut" for="silenceInput"></output></label>
       <input id="silenceInput" class="range" type="range" min="1" max="15" step="0.5">
       <p class="hint">Plus c’est long, plus tu peux faire de pauses en parlant. Touche à nouveau le micro pour finir tout de suite.</p>
+      <details class="found">
+        <summary>Journal de la dernière dictée (en cas de souci)</summary>
+        <pre id="speechLog" class="log"></pre>
+        <div class="set-acts"><button id="copyLog" class="txt-btn" type="button">Copier le journal</button></div>
+      </details>
     </section>
     <section class="set-block">
       <h3>Consommation</h3>

@@ -128,7 +128,8 @@ a{color:var(--ai)}
 .field textarea{flex:1;min-width:0;resize:none;border:1px solid var(--line);border-radius:16px;padding:11px 14px;font:inherit;font-size:1rem;line-height:1.4;max-height:150px;background:var(--paper);color:var(--ink)}
 .field textarea::placeholder{color:var(--muted);opacity:.85}
 .field textarea:focus{outline:none;border-color:var(--ai)}
-.field textarea[readonly]{border-color:var(--shu)}
+.field textarea[readonly]{border-color:var(--ai)}
+.field textarea[readonly][lang="ja"]{border-color:var(--shu)}
 .round{flex:none;width:46px;height:46px;border-radius:50%;display:grid;place-items:center}
 .round svg{width:22px;height:22px}
 .photo{border:1px solid var(--line);background:var(--paper);color:var(--muted);cursor:pointer}
@@ -170,6 +171,7 @@ a{color:var(--ai)}
 .range-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:.92rem}
 .range-row output{flex:none;font-weight:700;color:var(--ai);font-variant-numeric:tabular-nums}
 .range{width:100%;accent-color:var(--ai);margin:0}
+.log{margin:8px 0;max-height:240px;overflow:auto;padding:8px 10px;border-radius:10px;background:var(--paper);border:1px solid var(--line);font:.72rem/1.45 ui-monospace,"Roboto Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink)}
 .key-status.ok{color:var(--ai)}
 .key-status.bad{color:var(--danger)}
 .steps{margin:0;padding-left:1.3em;font-size:.88rem;display:flex;flex-direction:column;gap:4px}

@@ -38,9 +38,13 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     (`ready`, `partial`, `final`, `error`), `kotobaInsets(top, bottom)`, `kotobaBack()`.
   - Micro : `SpeechRecognizer` d'Android (`SpeechInput.java`), langue imposée par le bouton :
     c'est ce qui permet de dicter en japonais sans toucher au clavier. Le recognizer coupe seul
-    après 1–2 s de silence : une dictée enchaîne donc plusieurs sessions jusqu'au délai de silence
-    choisi dans les réglages (`state.silence`, 5 s par défaut). Hors Android, la page se rabat sur
-    la Web Speech API (`continuous` + même délai), puis sur le micro du clavier.
+    après ~1 s de silence : une dictée enchaîne donc plusieurs sessions, sur le même recognizer et
+    sans délai (sinon les mots dits pendant la relance sont perdus), jusqu'au délai de silence
+    choisi dans les réglages (`state.silence`, 5 s par défaut). Pas d'extras
+    `EXTRA_SPEECH_INPUT_*_SILENCE_LENGTH_MILLIS` : résultats imprévisibles. Chaque étape est
+    écrite dans le journal de dictée (Réglages > Dictée, événements `log`) pour le dépannage sur le
+    téléphone. Hors Android, la page se rabat sur la Web Speech API (`continuous` + même délai),
+    puis sur le micro du clavier.
   - Clavier : petit bouton à côté de chaque micro. `KotobaWebView` donne la langue au clavier via
     `EditorInfo.hintLocales` (Gboard la suit si elle est installée), relu après `restartInput`.
   - Photos : `capture` → appli appareil photo via `FileProvider` (pas de permission CAMERA),

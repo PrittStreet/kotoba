@@ -64,6 +64,7 @@
   const files = new Map();      // id -> image blob sent to Claude (this session only)
   const photoUrls = new Map();  // id -> sharp object URL of that image (this session only)
   let busy = false, ctl = null, keyProblem = '', memKey = '', memWs = '';
+  let runStartedAt = 0;
   let listening = null;         // { lang: 'fr' | 'ja', text } while the microphone is on
   let queuedSrc = null;         // language of a dictated sentence waiting for the current translation
 
@@ -441,6 +442,7 @@
   async function run(it) {
     if (busy) return;
     busy = true;
+    runStartedAt = Date.now();
     setSending(true);
     it.status = 'pending'; it.err = '';
     if (it.kind === 'text') { it.tr = ''; it.ro = ''; it.lit = ''; it.note = ''; } else { it.tr = ''; it.blocks = []; it.title = ''; it.raw = ''; }
@@ -829,6 +831,7 @@
   const MIC_IDLE = { fr: 'Français', ja: '日本語' };
   const MIC_NAME = { fr: 'Parler français', ja: '日本語で話す' };
   const MIC_ON = { fr: 'J’écoute…', ja: 'どうぞ…' };
+  const MIC_ENDING = { fr: 'Un instant…', ja: '少々…' };
   function syncMic() {
     micBtns.forEach((b) => {
       const lang = b.dataset.mic;
@@ -837,11 +840,11 @@
       b.setAttribute('aria-pressed', String(on));
       b.setAttribute('aria-label', on ? (lang === 'ja' ? '聞き取りを終える' : 'Arrêter l’écoute') : MIC_NAME[lang]);
       b.querySelector('.ico').innerHTML = on ? ICONS.stop : ICONS.mic;
-      b.querySelector('.lbl').textContent = on ? MIC_ON[lang] : MIC_IDLE[lang];
+      b.querySelector('.lbl').textContent = on ? (listening.ending ? MIC_ENDING : MIC_ON)[lang] : MIC_IDLE[lang];
     });
     ta.readOnly = !!listening;
     ta.placeholder = listening
-      ? (listening.lang === 'ja' ? '話してください…' : 'Parle, la phrase s’affiche ici…')
+      ? (listening.lang === 'ja' ? '話してください…' : 'Parle…')
       : (state.speaker === 'ja' ? 'ここに入力' : 'Écris ici');
   }
   // In the Android app, the keyboard opens in the language of the key (Gboard follows the hint).
@@ -871,9 +874,18 @@
     openKeyboard(lang);
     toast(lang === 'ja' ? 'キーボードのマイクをタップして話してください' : 'Touche le micro de ton clavier et parle');
   }
+  // Second tap on the microphone, or the send key while listening: finish the sentence, it gets
+  // translated. Further taps wait for that (they used to cancel the translation that followed).
+  function finishListening() {
+    if (!listening || listening.ending) return;
+    listening.ending = true;
+    logSpeech('page : fin demandée');
+    syncMic();
+    try { stt.stop(); } catch (e) {}
+  }
   function toggleMic(lang) {
     if (listening) {
-      if (listening.lang === lang) { stt.stop(); return; } // finish the sentence: it gets translated
+      if (listening.lang === lang) { finishListening(); return; }
       cancelListening();
     }
     if (!stt) { keyboardDictation(lang); return; }
@@ -881,7 +893,8 @@
     stopSpeaking();
     if (document.activeElement === ta) ta.blur();
     state.speaker = lang;
-    listening = { lang, text: '' };
+    listening = { lang, text: '', ending: false };
+    logSpeech('—— dictée ' + (lang === 'ja' ? 'japonais' : 'français') + ', silence ' + state.silence + ' s');
     ta.value = '';
     autosize();
     syncPrefs(); save();
@@ -907,7 +920,19 @@
       default: return 'La dictée a échoué. Réessaie.';
     }
   }
+  // What the dictation did, for Settings > Dictée (the Android app adds its own lines).
+  const speechLog = [];
+  function logSpeech(line) {
+    speechLog.push(line);
+    if (speechLog.length > 150) speechLog.splice(0, speechLog.length - 150);
+    const pre = $('#speechLog');
+    if (pre && !settingsEl.hidden) pre.textContent = speechLog.join('\n');
+  }
   function onSpeech(ev) {
+    if (ev && ev.type === 'log') { logSpeech(ev.text || ''); return; }
+    if (ev && (ev.type === 'final' || ev.type === 'error')) {
+      logSpeech('page : ' + (ev.type === 'final' ? 'texte reçu (' + (ev.text || '').length + ' caractères)' : 'erreur ' + ev.code) + (listening ? '' : ', ignoré'));
+    }
     if (!listening || !ev) return;
     if (ev.type === 'partial') {
       listening.text = ev.text || '';
@@ -1021,8 +1046,10 @@
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    if (busy) { if (ctl) ctl.abort(); return; }
-    if (listening) { stt.stop(); return; }
+    // Stop a translation only once its stop key has been visible a moment: a second tap meant to
+    // send the dictated sentence used to cancel it.
+    if (busy) { if (ctl && Date.now() - runStartedAt > 1000) ctl.abort(); return; }
+    if (listening) { finishListening(); return; }
     submit();
   });
   // Tapping send keeps the keyboard open for the next sentence.
@@ -1137,6 +1164,7 @@
   function openSettings(msg) {
     cancelListening();
     syncSilence();
+    $('#speechLog').textContent = speechLog.length ? speechLog.join('\n') : 'Rien pour l’instant : fais une dictée, puis reviens ici.';
     keyInput.value = storedKey();   // never shows the built-in key
     wsInput.value = storedWorkspace();
     keyInput.placeholder = BUILTIN.apiKey ? 'Clé fournie avec l’app' : 'sk-ant-…';
@@ -1193,6 +1221,14 @@
     keyProblem = '';
     syncBanner();
     setKeyStatus(BUILTIN.apiKey ? 'Clé supprimée : Kotoba reprend la clé fournie avec l’app.' : 'Clé supprimée de ce téléphone.');
+  });
+  $('#copyLog').addEventListener('click', () => {
+    const text = speechLog.join('\n');
+    if (!text) return;
+    try {
+      if (NATIVE) { if (!NATIVE.copy(text)) toast('Journal copié'); }
+      else navigator.clipboard.writeText(text).then(() => toast('Journal copié'));
+    } catch (e) {}
   });
   silenceInput.addEventListener('input', () => {
     const v = Number(silenceInput.value);

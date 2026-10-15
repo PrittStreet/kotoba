@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
@@ -14,19 +15,22 @@ import java.util.ArrayList;
  * Android speech recognition (Google's, the same as the keyboard microphone), with the language
  * chosen by the button, so nobody has to switch the keyboard. Main thread only.
  *
- * The recognizer ends a session by itself after a second or two of silence and often ignores the
- * silence length it is asked for. So one dictation can span several sessions: when one ends, the
- * next starts, until the speaker has been silent for the chosen time or taps the button again.
+ * The recognizer ends a session by itself after about a second of silence. So one dictation can
+ * span several sessions: when one ends, the next starts at once on the same recognizer, until the
+ * speaker has been silent for the chosen time or taps the button again. The silence-length extras
+ * of RecognizerIntent are not used: Android warns they give unexpected results, and they do.
  */
 final class SpeechInput implements RecognitionListener {
     /** Before the first word, wait at least this long. */
     private static final long FIRST_WORDS_MS = 6000;
     /** After asking the recognizer to stop, how long to wait for its last words. */
-    private static final long LAST_WORDS_MS = 2000;
+    private static final long LAST_WORDS_MS = 1500;
+    /** A session that fails faster than this is not listening: wait a little before the next. */
+    private static final long SHORT_SESSION_MS = 700;
 
     private final MainActivity app;
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final Runnable silenceOver = this::finish;
+    private final Runnable silenceOver = () -> finish("silence");
     private final Runnable deliver = this::deliver;
     private final Runnable restart = this::listen;
     private SpeechRecognizer rec;
@@ -35,7 +39,10 @@ final class SpeechInput implements RecognitionListener {
     private boolean ending;      // waiting for the last words before delivering
     private boolean ready;       // "ready" was sent to the page
     private int retries;
+    private int sessions;
     private long silenceMs;
+    private long startedAt;      // the dictation
+    private long sessionAt;      // the current recognizer session
     private String sep = " ";
     private String heard = "";   // words of the finished sessions
     private String partial = ""; // words of the current session so far
@@ -54,27 +61,29 @@ final class SpeechInput implements RecognitionListener {
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
                 .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, app.getPackageName())
-                // Honoured by some recognizers only; the session chaining below covers the others.
-                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, this.silenceMs)
-                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, this.silenceMs);
+                .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, app.getPackageName());
         heard = "";
         partial = "";
         retries = 0;
+        sessions = 0;
         ready = false;
         ending = false;
         active = true;
+        startedAt = SystemClock.elapsedRealtime();
+        log("début " + lang + ", fin après " + this.silenceMs + " ms de silence");
         main.postDelayed(silenceOver, Math.max(this.silenceMs, FIRST_WORDS_MS));
+        create();
         listen();
     }
 
     /** The button was tapped again: finish now with what was heard. */
     void stop() {
-        finish();
+        finish("bouton");
     }
 
     /** Drops the dictation, no result. */
     void cancel() {
+        if (active) log("annulée");
         active = false;
         ending = false;
         main.removeCallbacks(silenceOver);
@@ -83,13 +92,27 @@ final class SpeechInput implements RecognitionListener {
         release();
     }
 
-    private void listen() {
-        if (!active || ending) return;
-        release(); // a fresh recognizer each time avoids "busy" errors on some phones
+    private void create() {
+        release();
         rec = SpeechRecognizer.createSpeechRecognizer(app);
         rec.setRecognitionListener(this);
+    }
+
+    private void listen() {
+        if (!active || ending) return;
+        if (rec == null) create();
         partial = "";
+        sessions++;
+        sessionAt = SystemClock.elapsedRealtime();
+        log("écoute (session " + sessions + ")");
         rec.startListening(intent);
+    }
+
+    /** Next session on the same recognizer, right away unless the last one failed at once. */
+    private void listenAgain() {
+        long lasted = SystemClock.elapsedRealtime() - sessionAt;
+        main.removeCallbacks(restart);
+        main.postDelayed(restart, lasted < SHORT_SESSION_MS ? 500 : 0);
     }
 
     private void release() {
@@ -107,9 +130,10 @@ final class SpeechInput implements RecognitionListener {
     }
 
     /** Silent long enough, or the button was tapped. */
-    private void finish() {
+    private void finish(String why) {
         if (!active || ending) return;
         ending = true;
+        log("fin (" + why + ")");
         main.removeCallbacks(silenceOver);
         main.removeCallbacks(restart);
         if (rec != null && !partial.isEmpty()) {
@@ -123,6 +147,8 @@ final class SpeechInput implements RecognitionListener {
     private void deliver() {
         if (!active) return;
         String text = join(heard, partial);
+        log("texte final : " + text.length() + " caractères");
+        active = false; // no "annulée" in the log
         cancel();
         if (text.isEmpty()) app.emitSpeech("error", null, "no-speech");
         else app.emitSpeech("final", text, null);
@@ -134,16 +160,30 @@ final class SpeechInput implements RecognitionListener {
         return a + sep + b;
     }
 
+    /** One line in the page's dictation log (Settings > Dictée), to see what happens on the phone. */
+    private void log(String what) {
+        app.emitSpeech("log", "+" + (SystemClock.elapsedRealtime() - startedAt) + " ms  " + what, null);
+    }
+
     @Override
     public void onReadyForSpeech(Bundle params) {
-        if (!active || ready) return;
+        if (!active) return;
+        log("prêt");
+        if (ready) return;
         ready = true;
         app.emitSpeech("ready", null, null);
     }
 
     @Override
     public void onBeginningOfSpeech() {
-        if (active && !ending) heardWords();
+        if (!active) return;
+        log("voix détectée");
+        if (!ending) heardWords();
+    }
+
+    @Override
+    public void onEndOfSpeech() {
+        if (active) log("fin de voix");
     }
 
     @Override
@@ -159,6 +199,7 @@ final class SpeechInput implements RecognitionListener {
     public void onResults(Bundle results) {
         if (!active) return;
         String text = best(results);
+        log("résultat : « " + (text.isEmpty() ? partial : text) + " »");
         heard = join(heard, text.isEmpty() ? partial : text);
         partial = "";
         if (ending) {
@@ -167,12 +208,19 @@ final class SpeechInput implements RecognitionListener {
             return;
         }
         if (!heard.isEmpty()) app.emitSpeech("partial", heard, null);
-        main.postDelayed(restart, 100); // the speaker may go on after a pause
+        listenAgain(); // the speaker may go on after a pause
     }
 
     @Override
     public void onError(int error) {
         if (!active) return;
+        // Some phones send a late "no match" for the session that just ended: not this one's.
+        if (error == SpeechRecognizer.ERROR_NO_MATCH && !ending
+                && SystemClock.elapsedRealtime() - sessionAt < 200) {
+            log("erreur " + error + " ignorée (session précédente)");
+            return;
+        }
+        log("erreur " + error + " (" + code(error) + ")");
         if (ending) {
             main.removeCallbacks(deliver);
             deliver();
@@ -184,12 +232,16 @@ final class SpeechInput implements RecognitionListener {
                 // A pause: keep listening until the chosen silence is over.
                 heard = join(heard, partial);
                 partial = "";
-                main.postDelayed(restart, 100);
+                listenAgain();
                 return;
             case SpeechRecognizer.ERROR_CLIENT:
             case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
                 if (retries++ < 3) {
-                    main.postDelayed(restart, 400);
+                    heard = join(heard, partial);
+                    partial = "";
+                    create(); // this recognizer is stuck: a fresh one
+                    main.removeCallbacks(restart);
+                    main.postDelayed(restart, 300);
                     return;
                 }
                 break;
@@ -198,6 +250,7 @@ final class SpeechInput implements RecognitionListener {
         }
         // A real problem: keep what was heard, otherwise report it.
         String text = join(heard, partial);
+        active = false;
         cancel();
         if (!text.isEmpty()) app.emitSpeech("final", text, null);
         else app.emitSpeech("error", null, code(error));
@@ -205,7 +258,6 @@ final class SpeechInput implements RecognitionListener {
 
     @Override public void onRmsChanged(float rmsdB) {}
     @Override public void onBufferReceived(byte[] buffer) {}
-    @Override public void onEndOfSpeech() {}
     @Override public void onEvent(int eventType, Bundle params) {}
 
     private static String best(Bundle b) {
