@@ -72,7 +72,8 @@
   let unfavAsk = ''; // id of the card asking whether to remove its favourite
   let runStartedAt = 0;
   let listening = null;         // { lang: 'fr' | 'ja', text } while the microphone is on
-  let queuedSrc = null;         // language of a dictated sentence waiting for the current translation
+  const waiting = [];           // cards created during another translation (dictation, photo): run in turn
+  let kanaFrom = 0;             // characters at the start of the field that came from a dictation: never turned into kana
 
   // ---------- storage (per-device) ----------
   function load() {
@@ -82,7 +83,7 @@
       if (Array.isArray(d.items)) {
         state.items = d.items
           .filter((i) => i && typeof i.id === 'string' && typeof i.tr === 'string')
-          .map((i) => i.status === 'pending' ? Object.assign({}, i, { status: i.tr ? 'done' : 'error', err: i.tr ? '' : 'Traduction interrompue.' }) : i);
+          .map((i) => i.status === 'pending' ? Object.assign({}, i, { status: 'error', err: 'Traduction interrompue.' }) : i);
       }
       if (d.speaker === 'fr' || d.speaker === 'ja') state.speaker = d.speaker;
       if (d.tier === 'quick' || d.tier === 'careful') state.tier = d.tier;
@@ -94,20 +95,25 @@
       state.started = d.started === true || state.items.length > 0 || loadUsage().n > 0;
     } catch (e) { /* storage unavailable */ }
   }
-  // Photos are heavy: if storage is full, keep only the most recent ones, then none.
+  // Photos are heavy: if storage is full, the stored copy drops pictures one at a time, oldest
+  // non-favourites first, favourites last, then the thumbnails. The cards in memory keep theirs.
   function save() {
-    const n = state.items.length;
-    const levels = [
-      (i) => i,
-      (i, k) => (i.photo && k < n - 6 ? Object.assign({}, i, { photo: '' }) : i),
-      (i) => (i.photo || i.thumb ? Object.assign({}, i, { photo: '', thumb: '' }) : i)
-    ];
-    for (const lv of levels) {
-      try {
-        const data = { items: state.items.map(lv), speaker: state.speaker, tier: state.tier, polite: state.polite, romaji: state.romaji, silence: state.silence, voice: state.voice, kana: state.kana, started: state.started };
-        localStorage.setItem(KEY, JSON.stringify(data));
-        return;
-      } catch (e) { /* try a lighter copy */ }
+    const prefs = { speaker: state.speaker, tier: state.tier, polite: state.polite, romaji: state.romaji, silence: state.silence, voice: state.voice, kana: state.kana, started: state.started };
+    const items = state.items.slice();
+    const write = () => {
+      try { localStorage.setItem(KEY, JSON.stringify(Object.assign({ items }, prefs))); return true; } catch (e) { return false; }
+    };
+    if (write()) return;
+    const order = items.map((i, k) => k).filter((k) => items[k].photo)
+      .sort((a, b) => (Number(!!items[a].fav) - Number(!!items[b].fav)) || a - b);
+    for (const k of order) {
+      items[k] = Object.assign({}, items[k], { photo: '' });
+      if (write()) return;
+    }
+    for (let k = 0; k < items.length; k++) {
+      if (!items[k].thumb) continue;
+      items[k] = Object.assign({}, items[k], { thumb: '' });
+      if (write()) return;
     }
   }
   // The key typed in the settings wins; otherwise the one built into the app, if any.
@@ -140,10 +146,14 @@
   const convItems = () => state.items.filter(inConv);
   function trimItems() {
     while (state.items.length > MAX_ITEMS) {
-      const k = state.items.findIndex((i) => !i.fav);
+      const last = state.items.length - 1;
+      const k = state.items.findIndex((i, n) => !i.fav && n < last && i.status !== 'pending');
       if (k < 0) break;
-      forgetPhoto(state.items[k].id);
+      const id = state.items[k].id;
+      forgetPhoto(id);
       state.items.splice(k, 1);
+      const c = thread.querySelector('.card[data-id="' + id + '"]');
+      if (c) c.remove();
     }
   }
 
@@ -168,13 +178,22 @@
   const JA_RE = /[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]/;
   const FR_RE = /[àâäçéèêëîïôöùûüœæ]/i;
   function detectSrc(text) {
-    if (JA_RE.test(text)) return 'ja';
+    if (JA_RE.test(text)) {
+      if (state.speaker === 'fr') {
+        // French sentence quoting a Japanese name or dish ("il reste du 納豆 ?")
+        const latin = (text.match(/[a-zà-ÿœæ]{2,}/gi) || []).join('').length;
+        const ja = (text.match(/[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]/g) || []).length;
+        if (latin > ja * 2 && /[a-zà-ÿ]{2,}\s+[a-zà-ÿ]{2,}/i.test(text)) return 'fr';
+      }
+      return 'ja';
+    }
     if (state.speaker === 'ja' && !FR_RE.test(text)) return 'ja'; // rōmaji typed on the Japanese side
     return 'fr';
   }
 
-  function copyFor(code) {
+  function copyFor(code, kind) {
     switch (code) {
+      case 'spend_limit': return 'Limite de dépenses de la clé atteinte : relève-la sur platform.claude.com (Limits) ou attends la date indiquée par Claude.';
       case 'no_key': return 'Ajoute ta clé API Claude dans les réglages pour traduire.';
       case 'bad_key': return 'Clé API refusée. Vérifie-la dans les réglages.';
       case 'no_credit': return 'Plus de crédit sur ton compte Claude : recharge-le sur platform.claude.com.';
@@ -186,7 +205,7 @@
       case 'overloaded': return 'Claude est surchargé. Réessaie dans un instant.';
       case 'server': return 'Erreur chez Claude. Touche Réessayer.';
       case 'network': return 'Pas de connexion. Vérifie le réseau puis touche Réessayer.';
-      case 'refused': return 'Claude n’a pas traduit ce texte. Reformule-le.';
+      case 'refused': return kind === 'image' ? 'Claude n’a pas traduit cette photo. Essaie une autre photo.' : 'Claude n’a pas traduit ce texte. Reformule-le.';
       case 'too_large': return 'Trop long ou trop lourd. Coupe le texte ou essaie une autre photo.';
       case 'image_rejected': return 'Format de photo non pris en charge. Essaie une autre image.';
       case 'photo_missing': return 'Photo introuvable. Reprends-la.';
@@ -194,7 +213,7 @@
       default: return 'La demande a échoué. Réessaie.';
     }
   }
-  const KEY_CODES = new Set(['no_key', 'bad_key', 'no_credit', 'needs_workspace', 'bad_workspace']);
+  const KEY_CODES = new Set(['no_key', 'bad_key', 'no_credit', 'needs_workspace', 'bad_workspace', 'spend_limit']);
   function syncBanner() {
     const msg = !getKey() ? 'Pour traduire, ajoute ta clé API Claude.' : (keyProblem ? copyFor(keyProblem) : '');
     $('#bannerText').textContent = msg;
@@ -229,6 +248,7 @@
     const msg = (err && err.message) || '';
     if (status === 401 || type === 'authentication_error') return 'bad_key';
     if (status === 402 || type === 'billing_error' || /credit balance/i.test(msg)) return 'no_credit';
+    if (/usage limits?|regain access|spend limit/i.test(msg)) return 'spend_limit';
     if (/workspace/i.test(msg)) return /not found/i.test(msg) ? 'bad_workspace' : 'needs_workspace';
     if (status === 403 || type === 'permission_error') return 'forbidden';
     if (status === 404 || type === 'not_found_error') return 'not_found';
@@ -436,7 +456,7 @@
   function finishLens(it, pendingLine) {
     if (pendingLine && pendingLine.trim()) eatLensLine(it, pendingLine);
     if (it.blocks.length) it.tr = lensText(it);
-    else it.tr = (it.raw || '').trim(); // Claude ignored the format: keep its text as a plain list
+    else it.tr = it.title ? '' : (it.raw || '').trim(); // no title line either: Claude ignored the format, keep its text
   }
   // Sections of a text answer: translation, then @@R rōmaji, @@F literal French, @@N note.
   const SECTION = { R: 'ro', F: 'lit', N: 'note' };
@@ -467,7 +487,7 @@
     if (busy) return;
     busy = true;
     runStartedAt = Date.now();
-    setSending(true);
+    syncSend();
     it.status = 'pending'; it.err = '';
     if (it.kind === 'text') { it.tr = ''; it.ro = ''; it.lit = ''; it.note = ''; } else { it.tr = ''; it.blocks = []; it.title = ''; it.raw = ''; }
     updateCard(it);
@@ -476,11 +496,13 @@
     let lensPending = '';
     try {
       if (it.kind === 'image') {
+        // the sharp blob only lives in this session; after a restart, the stored 1000 px picture
         const f = files.get(it.id);
-        if (!f) throw apiErr('photo_missing');
-        const type = f.type || 'image/jpeg';
+        const kept = /^data:image\/jpeg;base64,/.test(it.photo || '');
+        if (!f && !kept) throw apiErr('photo_missing');
+        const type = f ? (f.type || 'image/jpeg') : 'image/jpeg';
         if (!IMAGE_TYPES.includes(type)) throw apiErr('image_rejected');
-        const data = await blobToBase64(f);
+        const data = f ? await blobToBase64(f) : it.photo.slice(it.photo.indexOf(',') + 1);
         req.model = MODEL_CAREFUL;
         req.maxTokens = 8192;
         req.content = [
@@ -493,7 +515,7 @@
           lensPending = lines.pop();
           let added = false;
           lines.forEach((l) => { if (eatLensLine(it, l)) added = true; });
-          if (added) { it.tr = lensText(it); lensProgress(it); }
+          if (added) { it.tr = it.blocks.length ? lensText(it) : ''; lensProgress(it); }
         };
       } else {
         req.model = state.tier === 'careful' ? MODEL_CAREFUL : MODEL_QUICK;
@@ -514,22 +536,25 @@
       else if (e && typeof e.text === 'string' && e.text) applyText(it, e.text);
       if (code === 'cancelled') {
         it.status = it.tr ? 'done' : 'error';
-        it.err = it.tr ? '' : copyFor(code);
+        it.err = it.tr ? '' : copyFor(code, it.kind);
       } else {
         it.status = 'error';
-        it.err = copyFor(code);
+        it.err = copyFor(code, it.kind);
         if (KEY_CODES.has(code)) { keyProblem = code === 'no_key' ? '' : code; syncBanner(); }
       }
     } finally {
       busy = false; ctl = null;
-      setSending(false);
+      syncSend();
       updateCard(it);
       save();
-      if (queuedSrc) {
-        const src = queuedSrc;
-        queuedSrc = null;
-        if (ta.value.trim()) submit(src, true);
-      }
+      runNext();
+    }
+  }
+  // The next card waiting for its turn, unless it was cleared meanwhile.
+  function runNext() {
+    while (waiting.length) {
+      const n = waiting.shift();
+      if (state.items.includes(n) && n.status === 'pending') { run(n); return; }
     }
   }
 
@@ -622,7 +647,7 @@
     if (it.status === 'error') {
       const e = el('div', 'err');
       e.append(el('span', null, it.err || 'La traduction a échoué.'));
-      if (it.kind === 'text' || files.has(it.id)) {
+      if (it.kind === 'text' || files.has(it.id) || it.photo) {
         const b = el('button', 'txt-btn', 'Réessayer');
         b.type = 'button';
         b.dataset.act = 'retry';
@@ -779,6 +804,8 @@
   function render() {
     thread.textContent = '';
     unfavAsk = '';
+    confirmBar.hidden = true;
+    closeSheet();
     const conv = convItems();
     if (!conv.length && !state.favOnly) {
       thread.append(el('p', 'intro', stt
@@ -796,7 +823,9 @@
     list.forEach((it) => thread.append(buildCard(it)));
     if (state.favOnly) thread.scrollTop = 0; else toBottom();
   }
-  function setSending(on) {
+  // While dictating, the send key finishes the sentence: it only becomes a stop key otherwise.
+  function syncSend() {
+    const on = busy && !listening;
     sendBtn.innerHTML = on ? ICONS.stop : ICONS.send;
     sendBtn.classList.toggle('stop', on);
     sendBtn.setAttribute('aria-label', on ? 'Arrêter' : 'Traduire');
@@ -917,6 +946,7 @@
       b.querySelector('.ico').innerHTML = on ? ICONS.stop : ICONS.mic;
       b.querySelector('.lbl').textContent = on ? (listening.ending ? MIC_ENDING : MIC_ON)[lang] : MIC_IDLE[lang];
     });
+    syncSend();
     ta.readOnly = !!listening;
     ta.placeholder = listening
       ? (listening.lang === 'ja' ? '話してください…' : 'Parle…')
@@ -965,7 +995,8 @@
   }
   function toggleMic(lang) {
     if (listening) {
-      if (listening.lang === lang) { finishListening(); return; }
+      // the sentence is being finished: it gets translated, other taps wait too
+      if (listening.lang === lang || listening.ending) { finishListening(); return; }
       cancelListening();
     }
     if (!stt) { keyboardDictation(lang); return; }
@@ -973,18 +1004,28 @@
     stopSpeaking();
     if (document.activeElement === ta) ta.blur();
     state.speaker = lang;
-    listening = { lang, text: '', ending: false };
+    // draft: what was typed in the field; it comes back once the dictation is over
+    listening = { lang, text: '', ending: false, draft: ta.value };
     logSpeech('—— dictée ' + (lang === 'ja' ? 'japonais' : 'français') + ', silence ' + state.silence + ' s');
     ta.value = '';
     autosize();
     syncPrefs(); save();
     try { stt.start(lang === 'ja' ? 'ja-JP' : 'fr-FR', Math.round(state.silence * 1000)); }
-    catch (e) { listening = null; syncMic(); toast('La dictée n’a pas pu démarrer.'); }
+    catch (e) { restoreDraft(listening.draft); listening = null; syncMic(); toast('La dictée n’a pas pu démarrer.'); }
   }
+  function restoreDraft(draft) {
+    ta.value = draft || '';
+    kanaFrom = 0;
+    autosize();
+  }
+  // Words already heard stay in the field to be corrected or sent (never turned into kana);
+  // otherwise the typed draft comes back.
   function cancelListening() {
     if (!listening) return;
+    const l = listening;
     listening = null;
     try { stt.cancel(); } catch (e) {}
+    if (l.text) kanaFrom = ta.value.length; else restoreDraft(l.draft);
     syncMic();
   }
   function micError(code, lang) {
@@ -1032,20 +1073,17 @@
       ta.value = listening.text;
       autosize();
     } else if (ev.type === 'final' || ev.type === 'error') {
-      const lang = listening.lang;
+      const { lang, draft } = listening;
       const text = ((ev.type === 'final' && ev.text) || '').trim();
       listening = null;
       syncMic();
+      restoreDraft(draft);
       if (ev.type === 'error' || !text) {
-        ta.value = '';
-        autosize();
         toast(micError(ev.type === 'error' ? ev.code : 'no-speech', lang), 3200);
         return;
       }
-      ta.value = text;
-      autosize();
-      if (busy) { queuedSrc = lang; toast('Traduction de la phrase précédente en cours…'); return; }
-      submit(lang, true);
+      if (!getKey()) { ta.value = text; autosize(); syncBanner(); openSettings('Ajoute d’abord ta clé API Claude.'); return; }
+      sendText(text, lang, true); // waits for its turn if a translation is under way
     }
   }
   // Called by the Android app: kotobaNative.speech({ type, text, code })
@@ -1056,7 +1094,8 @@
     if (!ev || !ev.wanted) return;
     const shown = String(ev.actual || '').toLowerCase().replace('_', '-');
     logSpeech('clavier : voulu ' + ev.wanted + ', affiché ' + (shown || '?') + ' (' + (ev.ime || '?') + ')');
-    if (shown.startsWith(ev.wanted) || kbdTold[ev.wanted] || document.activeElement !== ta) return;
+    if (ev.wanted !== state.speaker || shown.startsWith(ev.wanted) || kbdTold[ev.wanted] || document.activeElement !== ta) return;
+    if (!shown && ev.wanted === 'fr') return; // this keyboard does not say its language: nothing to tell
     kbdTold[ev.wanted] = true;
     const samsung = /samsung|com\.sec\./i.test(ev.ime || '');
     if (ev.wanted === 'ja') {
@@ -1104,7 +1143,10 @@
       const c = s[i], n1 = s[i + 1] || '', n2 = s[i + 2] || '';
       if (c === 'n' && !isVowel(n1) && n1 !== 'y') {
         if (n1 === "'") { out += 'ん'; i += 2; continue; }
-        if (n1 === 'n' && !isVowel(n2) && n2 !== 'y') { out += 'ん'; i += 2; continue; }
+        if (n1 === 'n' && !isVowel(n2) && n2 !== 'y') {
+          if (!n2 && !final) { out += src.substr(i, 2); i += 2; continue; } // konn|ichiwa: wait for the next letter
+          out += 'ん'; i += 2; continue;
+        }
         if (!n1 && !final) { out += src[i]; i += 1; continue; }
         out += 'ん'; i += 1; continue;
       }
@@ -1119,8 +1161,10 @@
   const kanaTyping = () => state.kana && state.speaker === 'ja' && !listening;
   // Convert as they type, unless the keyboard is still composing a word or the cursor is elsewhere.
   function liveKana() {
-    if (!kanaTyping() || !/[a-z]/i.test(ta.value) || ta.selectionStart !== ta.value.length) return;
-    const k = toKana(ta.value, false);
+    kanaFrom = Math.min(kanaFrom, ta.value.length);
+    const keep = ta.value.slice(0, kanaFrom), tail = ta.value.slice(kanaFrom);
+    if (!kanaTyping() || !/[a-z]/i.test(tail) || ta.selectionStart !== ta.value.length) return;
+    const k = keep + toKana(tail, false);
     if (k === ta.value) return;
     ta.value = k;
     ta.setSelectionRange(k.length, k.length);
@@ -1136,21 +1180,27 @@
     trimItems();
     if (state.favOnly) { state.favOnly = false; syncPrefs(); }
     if (reRender) render(); else { thread.append(buildCard(it)); toBottom(); }
+    save(); // a restart during the translation keeps the sentence (shown as interrupted)
   }
   // forcedSrc: the language of the microphone key, when the text was dictated.
   function submit(forcedSrc, spoken) {
     if (busy) return;
-    const typed = ta.value.trim();
-    const text = !spoken && kanaTyping() ? toKana(typed, true) : typed;
+    const v = ta.value, cut = Math.min(kanaFrom, v.length);
+    const text = (!spoken && kanaTyping() ? v.slice(0, cut) + toKana(v.slice(cut), true) : v).trim();
     if (!text) { ta.focus(); return; }
     if (!getKey()) { syncBanner(); openSettings('Ajoute d’abord ta clé API Claude.'); return; }
-    const src = forcedSrc || detectSrc(text);
+    ta.value = '';
+    kanaFrom = 0;
+    autosize();
+    sendText(text, forcedSrc || detectSrc(text), spoken);
+  }
+  // A new card; translated now, or after the translation under way.
+  function sendText(text, src, spoken) {
     const it = { id: newId(), kind: 'text', src, tgt: src === 'ja' ? 'fr' : 'ja', text, tr: '', ro: '', note: '', fav: false, ts: Date.now(), status: 'pending' };
     if (spoken) it.spoken = true;
     addItem(it);
-    ta.value = '';
-    autosize();
-    run(it);
+    if (busy) { waiting.push(it); toast('Traduite juste après la phrase en cours.'); }
+    else run(it);
   }
   function copyItem(it, card) {
     const fallback = () => {
@@ -1174,6 +1224,7 @@
   }
   let shown = null;
   function openShow(it) {
+    closeSheet();
     shown = it;
     const tr = $('#showTr'), ro = $('#showRo');
     tr.textContent = it.tr; tr.lang = it.tgt;
@@ -1207,6 +1258,7 @@
     else if (act === 'turn') turnPhoto(it);
     else if (act === 'view') { it.view = b.dataset.view; save(); updateCard(it); }
     else if (act === 'fav') {
+      confirmBar.hidden = true; // its "N favoris restent" would be stale
       if (!it.fav) { it.fav = true; save(); updateCard(it); toast('Gardé dans les favoris'); return; }
       // removing a favourite asks first, in the card
       const prev = unfavAsk && unfavAsk !== it.id ? state.items.find((i) => i.id === unfavAsk) : null;
@@ -1222,7 +1274,10 @@
       // already cleared from the conversation: nowhere left to show it
       if (it.out) { forgetPhoto(it.id); state.items.splice(state.items.indexOf(it), 1); }
       save();
-      if (state.favOnly || it.out) render(); else updateCard(it);
+      confirmBar.hidden = true;
+      // keep the ★ list where it is: only this card goes (render() would scroll back to the top)
+      if (state.favOnly && state.items.some((i) => i.fav)) card.remove();
+      else if (state.favOnly || it.out) render(); else updateCard(it);
       toast('Favori supprimé');
     } else if (act === 'retry') {
       if (busy) { toast('Une traduction est déjà en cours.'); return; }
@@ -1235,8 +1290,8 @@
     e.preventDefault();
     // Stop a translation only once its stop key has been visible a moment: a second tap meant to
     // send the dictated sentence used to cancel it.
-    if (busy) { if (ctl && Date.now() - runStartedAt > 1000) ctl.abort(); return; }
     if (listening) { finishListening(); return; }
+    if (busy) { if (ctl && Date.now() - runStartedAt > 1000) ctl.abort(); return; }
     submit();
   });
   // Tapping send keeps the keyboard open for the next sentence.
@@ -1360,7 +1415,11 @@
     if (busy) { toast('Attends la fin de la traduction en cours.'); return; }
     const it = { id: newId(), kind: 'image', src: 'ja', tgt: 'fr', text: '', tr: '', ro: '', note: '', fav: false, ts: Date.now(), status: 'pending', thumb: '', photo: '', w: 0, h: 0, title: '', blocks: [] };
     addItem(it);
-    const img = await prepareImage(f);
+    // a translation under way from now on: nothing else starts while the photo is prepared
+    busy = true; syncSend();
+    let img;
+    try { img = await prepareImage(f); } finally { busy = false; syncSend(); }
+    if (!state.items.includes(it)) { runNext(); return; } // cleared meanwhile: not sent
     it.thumb = img.thumb;
     it.photo = img.photo;
     it.w = img.w; it.h = img.h;
@@ -1368,9 +1427,11 @@
     if (img.blob.size > 3.7 * 1024 * 1024) {
       it.status = 'error'; it.err = 'Photo trop lourde. Essaie une image plus petite.';
       updateCard(it); save();
+      runNext();
       return;
     }
     files.set(it.id, img.blob);
+    save();
     run(it);
   }
 
@@ -1414,6 +1475,7 @@
   }
   function openSettings(msg) {
     cancelListening();
+    closeSheet();
     syncSilence();
     syncVoice();
     $('#speechLog').textContent = speechLog.length ? speechLog.join('\n') : 'Rien pour l’instant : fais une dictée, puis reviens ici.';
@@ -1465,7 +1527,17 @@
     keyInput.type = hide ? 'password' : 'text';
     $('#keyShow').textContent = hide ? 'Afficher' : 'Masquer';
   });
+  let keyDeleteAsk = 0;
   $('#keyDelete').addEventListener('click', () => {
+    const b = $('#keyDelete');
+    if (!keyDeleteAsk) {
+      b.textContent = 'Confirmer la suppression';
+      b.classList.add('danger');
+      keyDeleteAsk = setTimeout(() => { keyDeleteAsk = 0; b.textContent = 'Supprimer'; b.classList.remove('danger'); }, 4000);
+      return;
+    }
+    clearTimeout(keyDeleteAsk); keyDeleteAsk = 0;
+    b.textContent = 'Supprimer'; b.classList.remove('danger');
     setKey('');
     setWorkspace('');
     keyInput.value = '';
@@ -1593,6 +1665,8 @@
     else if (!settingsEl.hidden) closeSettings();
     else if (listening) cancelListening();
     else if (!confirmBar.hidden) confirmBar.hidden = true;
+    else if (unfavAsk) { const a = state.items.find((i) => i.id === unfavAsk); unfavAsk = ''; if (a) updateCard(a); }
+    else if (state.favOnly) { state.favOnly = false; syncPrefs(); render(); }
     else return false;
     return true;
   }
@@ -1603,7 +1677,7 @@
   // ---------- start ----------
   load();
   try { if (NATIVE) NATIVE.voice(state.voice); } catch (e) {}
-  setSending(false);
+  syncSend();
   syncPrefs();
   syncBanner();
   render();
