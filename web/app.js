@@ -1,6 +1,7 @@
 (() => {
   const KEY = 'kotoba.v1';
   const KEY_API = 'kotoba.apikey';
+  const KEY_WS = 'kotoba.workspace';
   const KEY_USAGE = 'kotoba.usage';
   const MAX_ITEMS = 150;
   // Set by the Android app (MainActivity): native microphone, voices and clipboard.
@@ -12,7 +13,7 @@
   const favBtn = $('#favBtn'), clearBtn = $('#clearBtn'), setBtn = $('#setBtn'), confirmBar = $('#confirm'), romajiBtn = $('#romajiBtn');
   const micBtns = Array.from(document.querySelectorAll('[data-mic]'));
   const showEl = $('#show'), settingsEl = $('#settings');
-  const keyInput = $('#keyInput'), keyStatus = $('#keyStatus');
+  const keyInput = $('#keyInput'), wsInput = $('#wsInput'), keyStatus = $('#keyStatus');
   const lensView = $('#lensView'), lvScroll = $('#lvScroll'), lvWrap = $('#lvWrap'), lvOrig = $('#lvOrig');
   const sheet = $('#sheet');
 
@@ -50,7 +51,7 @@
   const state = { items: [], speaker: 'fr', tier: 'quick', polite: true, romaji: true, favOnly: false };
   const files = new Map();      // id -> image blob sent to Claude (this session only)
   const photoUrls = new Map();  // id -> sharp object URL of that image (this session only)
-  let busy = false, ctl = null, keyProblem = '', memKey = '';
+  let busy = false, ctl = null, keyProblem = '', memKey = '', memWs = '';
   let listening = null;         // { lang: 'fr' | 'ja', text } while the microphone is on
   let queuedSrc = null;         // language of a dictated sentence waiting for the current translation
 
@@ -92,6 +93,14 @@
   function setKey(k) {
     memKey = k;
     try { if (k) localStorage.setItem(KEY_API, k); else localStorage.removeItem(KEY_API); } catch (e) {}
+  }
+  // Only for keys not tied to one workspace (Console "personal" keys): the workspace each request runs in.
+  function getWorkspace() {
+    try { return (localStorage.getItem(KEY_WS) || '').trim(); } catch (e) { return memWs; }
+  }
+  function setWorkspace(w) {
+    memWs = w;
+    try { if (w) localStorage.setItem(KEY_WS, w); else localStorage.removeItem(KEY_WS); } catch (e) {}
   }
   function forgetPhoto(id) {
     files.delete(id);
@@ -138,6 +147,8 @@
       case 'no_key': return 'Ajoute ta clé API Claude dans les réglages pour traduire.';
       case 'bad_key': return 'Clé API refusée. Vérifie-la dans les réglages.';
       case 'no_credit': return 'Plus de crédit sur ton compte Claude : recharge-le sur platform.claude.com.';
+      case 'needs_workspace': return 'Ta clé n’est liée à aucun workspace : indique l’ID du workspace dans les réglages.';
+      case 'bad_workspace': return 'Workspace introuvable pour cette clé : vérifie son ID dans les réglages.';
       case 'forbidden': return 'Cette clé n’a pas accès à ce modèle.';
       case 'not_found': return 'Modèle introuvable : Kotoba a sans doute besoin d’une mise à jour.';
       case 'rate_limited': return 'Trop de demandes d’un coup. Réessaie dans un moment.';
@@ -149,10 +160,10 @@
       case 'image_rejected': return 'Format de photo non pris en charge. Essaie une autre image.';
       case 'photo_missing': return 'Photo introuvable. Reprends-la.';
       case 'cancelled': return 'Traduction arrêtée.';
-      default: return 'La traduction a échoué. Touche Réessayer.';
+      default: return 'La demande a échoué. Réessaie.';
     }
   }
-  const KEY_CODES = new Set(['no_key', 'bad_key', 'no_credit']);
+  const KEY_CODES = new Set(['no_key', 'bad_key', 'no_credit', 'needs_workspace', 'bad_workspace']);
   function syncBanner() {
     const msg = !getKey() ? 'Pour traduire, ajoute ta clé API Claude.' : (keyProblem ? copyFor(keyProblem) : '');
     $('#bannerText').textContent = msg;
@@ -167,12 +178,14 @@
   const PRICES = { [MODEL_QUICK]: [0.10, 0.50], [MODEL_CAREFUL]: [2, 10] };
   const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
-  function apiHeaders(key) {
-    return {
+  function apiHeaders(key, workspace) {
+    const h = {
       'x-api-key': key,
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true'
     };
+    if (workspace) h['anthropic-workspace-id'] = workspace;
+    return h;
   }
   function apiErr(code, extra) {
     const e = new Error(code);
@@ -185,6 +198,7 @@
     const msg = (err && err.message) || '';
     if (status === 401 || type === 'authentication_error') return 'bad_key';
     if (status === 402 || type === 'billing_error' || /credit balance/i.test(msg)) return 'no_credit';
+    if (/workspace/i.test(msg)) return /not found/i.test(msg) ? 'bad_workspace' : 'needs_workspace';
     if (status === 403 || type === 'permission_error') return 'forbidden';
     if (status === 404 || type === 'not_found_error') return 'not_found';
     if (status === 413 || type === 'request_too_large') return 'too_large';
@@ -198,7 +212,7 @@
   async function claude({ model, content, maxTokens, signal, onText }) {
     const key = getKey();
     if (!key) throw apiErr('no_key');
-    const headers = Object.assign({ 'content-type': 'application/json' }, apiHeaders(key));
+    const headers = Object.assign({ 'content-type': 'application/json' }, apiHeaders(key, getWorkspace()));
     const body = {
       model,
       max_tokens: maxTokens,
@@ -262,15 +276,15 @@
     if (stop === 'refusal') throw apiErr('refused', { text });
     return { text, truncated: stop === 'max_tokens' };
   }
-  // A free call that only checks the key.
-  async function testKey(key) {
+  // A free call that only checks the key (and workspace). Returns { code, detail }, code '' when it works.
+  async function testKey(key, workspace) {
     try {
-      const res = await fetch(API + 'models?limit=1', { headers: apiHeaders(key) });
-      if (res.ok) return '';
+      const res = await fetch(API + 'models?limit=1', { headers: apiHeaders(key, workspace) });
+      if (res.ok) return { code: '', detail: '' };
       let err = null;
       try { err = (await res.json()).error; } catch (e) {}
-      return errCode(res.status, err);
-    } catch (e) { return 'network'; }
+      return { code: errCode(res.status, err), detail: (err && err.message) || ('HTTP ' + res.status) };
+    } catch (e) { return { code: 'network', detail: '' }; }
   }
 
   function loadUsage() {
@@ -1022,6 +1036,7 @@
   function openSettings(msg) {
     cancelListening();
     keyInput.value = getKey();
+    wsInput.value = getWorkspace();
     keyInput.type = 'password';
     $('#keyShow').textContent = 'Afficher';
     if (msg) setKeyStatus(msg, 'bad');
@@ -1034,26 +1049,33 @@
   function closeSettings() { settingsEl.hidden = true; if (document.activeElement === keyInput) keyInput.blur(); }
   async function saveKey() {
     const k = keyInput.value.replace(/\s+/g, '');
+    const w = wsInput.value.replace(/\s+/g, '');
     if (!k) { setKeyStatus('Colle ta clé dans le champ.', 'bad'); return; }
+    if (w && !/^wrkspc_[A-Za-z0-9]+$/.test(w)) { setKeyStatus('L’ID du workspace commence par wrkspc_ : copie-le en entier, ou laisse le champ vide.', 'bad'); return; }
     setKey(k);
+    setWorkspace(w);
     keyInput.value = k;
+    wsInput.value = w;
     keyProblem = '';
     syncBanner();
     const btn = $('#keySave');
     btn.disabled = true;
     setKeyStatus('Test de la clé…');
-    const code = await testKey(k);
+    const r = await testKey(k, w);
     btn.disabled = false;
-    if (getKey() !== k) return;
-    if (!code) { setKeyStatus('Clé valide ✓ Tu peux traduire.', 'ok'); return; }
-    if (code === 'bad_key') { keyProblem = code; syncBanner(); setKeyStatus('Clé refusée : vérifie que tu l’as copiée en entier.', 'bad'); return; }
-    setKeyStatus('Clé enregistrée, mais le test a échoué : ' + copyFor(code), 'bad');
+    if (getKey() !== k || getWorkspace() !== w) return;
+    if (!r.code) { setKeyStatus('Clé valide ✓ Tu peux traduire.', 'ok'); return; }
+    if (KEY_CODES.has(r.code)) { keyProblem = r.code; syncBanner(); }
+    if (r.code === 'bad_key') setKeyStatus('Clé refusée : vérifie que tu l’as copiée en entier.', 'bad');
+    else if (r.code === 'needs_workspace') { setKeyStatus('Ta clé n’est liée à aucun workspace : colle l’ID du workspace ci-dessus (wrkspc_…), ou crée une clé liée au workspace Default.', 'bad'); wsInput.focus(); }
+    else if (r.code === 'bad_workspace') setKeyStatus('Ce workspace est introuvable pour ta clé : vérifie son ID.', 'bad');
+    else setKeyStatus('Clé enregistrée, mais le test a échoué : ' + (r.code === 'failed' && r.detail ? r.detail : copyFor(r.code)), 'bad');
   }
   setBtn.addEventListener('click', () => openSettings());
   $('#bannerBtn').addEventListener('click', () => openSettings());
   $('#closeSettings').addEventListener('click', closeSettings);
   $('#keySave').addEventListener('click', saveKey);
-  keyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveKey(); } });
+  [keyInput, wsInput].forEach((i) => i.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveKey(); } }));
   $('#keyShow').addEventListener('click', () => {
     const hide = keyInput.type === 'text';
     keyInput.type = hide ? 'password' : 'text';
@@ -1061,7 +1083,9 @@
   });
   $('#keyDelete').addEventListener('click', () => {
     setKey('');
+    setWorkspace('');
     keyInput.value = '';
+    wsInput.value = '';
     keyProblem = '';
     syncBanner();
     setKeyStatus('Clé supprimée de ce téléphone.');
