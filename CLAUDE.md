@@ -53,6 +53,13 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
 - CI : `.github/workflows/apk.yml` construit + lint à chaque push, publie une Release `apk-N`
   (avec `kotoba.apk`) sur `main`. Lien stable : `releases/latest/download/kotoba.apk`.
 
+Comportement voulu par Ronan (définitif) : côté français, Claude est son interprète, pas un
+traducteur mot à mot. Quand Ronan décrit ce qu'il veut (« demande au pharmacien s'il a
+l'équivalent du Microlax »), Claude écrit directement la phrase à dire en japonais, à la première
+personne, avec les mots que les Japonais connaissent, et résume en français dans la note `@@N` ce
+que dit la phrase quand ce n'est pas une traduction directe. Côté japonais : traduction du sens,
+avec le contexte de la conversation. Même modèle, même vitesse : tout est dans `textPrompt`.
+
 Ce qui vient de l'artifact et doit rester : détection FR/JA, rōmaji et note de nuance
 (format `@@R` / `@@N`), Rapide / Soigné, Poli / Familier, Écouter, Copier, Montrer, Favoris,
 historique, photos « façon Google Lens » (une ligne JSON par bloc, `{"b":[x0,y0,x1,y1],"o":…,"t":…}`,

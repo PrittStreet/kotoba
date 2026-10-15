@@ -308,7 +308,6 @@
     try { localStorage.setItem(KEY_USAGE, JSON.stringify(u)); } catch (e) {}
   }
 
-  const LANG = { fr: 'French', ja: 'Japanese' };
   function textPrompt(it) {
     const toJa = it.tgt === 'ja';
     const idx = state.items.indexOf(it);
@@ -317,24 +316,42 @@
       .slice(-3)
       .map((x) => '- ' + x.src.toUpperCase() + ': ' + x.text + '  →  ' + x.tgt.toUpperCase() + ': ' + x.tr)
       .join('\n');
+    // French side: the user often describes what they want ("demande au pharmacien s'il a…"):
+    // Claude speaks for them instead of translating the request word for word.
     const lines = [
-      'You are an expert French ⇄ Japanese interpreter helping a French speaker in Japan talk with Japanese people.',
-      'Translate the text below from ' + LANG[it.src] + ' into ' + LANG[it.tgt] + '.',
-      '',
-      'Rules:',
-      '- Translate the meaning, not word by word: write what a native speaker would naturally say in this situation.',
-      '- Keep names, numbers, prices, times and the tone of the original.'
+      'You are the personal interpreter of a French speaker living in Japan (the user), in their conversations with Japanese people: shops, pharmacies, doctors, stations, restaurants, offices, neighbours.'
     ];
-    if (toJa) lines.push(state.polite
-      ? '- Japanese register: polite です／ます form, right for strangers, shop and restaurant staff, colleagues.'
-      : '- Japanese register: casual plain form (タメ口), as between close friends.');
-    if (it.src === 'ja' && !JA_RE.test(it.text)) lines.push('- The source is Japanese written in rōmaji; read it as Japanese.');
+    if (toJa) {
+      lines.push(
+        'The user typed or dictated the French text below. It is either the sentence they want to say, or a description of what they want to say, ask or get ("demande au pharmacien s’il a…", "dis-lui que…", "je voudrais savoir si…", "comment je dis…").',
+        'Write the Japanese the user should say or show to the Japanese person: speaking as the user, in the first person, directly to that person, the way a skilled interpreter would put their request.',
+        '',
+        'Rules:',
+        '- Act on the user’s instructions instead of translating them: leave out what is addressed to you ("peux-tu", "fais-moi une demande", "s’il te plaît" said to you), and speak to the person directly rather than about them ("the pharmacist").',
+        '- Natural, idiomatic Japanese for the situation, not a word-by-word translation.',
+        '- Name things the way Japanese people know them: for a foreign brand or product, say what kind of product it is in Japan (the brand name can follow).',
+        '- Keep names, numbers, prices and times; add nothing the user did not ask for.',
+        state.polite
+          ? '- Japanese register: polite です／ます form, right for strangers, shop and restaurant staff, colleagues.'
+          : '- Japanese register: casual plain form (タメ口), as between close friends.'
+      );
+    } else {
+      lines.push(
+        'Below is what a Japanese person said or wrote to the user. Translate it into natural French so the user understands what they mean: the meaning, not word by word, using the conversation so far to understand what they refer to.',
+        '',
+        'Rules:',
+        '- Keep names, numbers, prices, times and the tone.'
+      );
+      if (!JA_RE.test(it.text)) lines.push('- The source is Japanese written in rōmaji; read it as Japanese.');
+    }
     if (it.spoken) lines.push('- The text comes from speech recognition: fix obvious recognition mistakes and missing punctuation silently.');
-    lines.push('', 'Output format, exactly, with nothing else (no quotes, no labels, no Markdown):', 'The translation.');
-    if (toJa && state.romaji) lines.push('Then a line containing only @@R, then the Hepburn rōmaji reading of your translation, with macrons (ō, ū).');
-    lines.push('Then, ONLY if there is an important nuance, ambiguity or cultural pitfall the French speaker should know about, a line containing only @@N, then one short sentence in French. Otherwise write nothing more.');
+    lines.push('', 'Output format, exactly, with nothing else (no quotes, no labels, no Markdown):', toJa ? 'The Japanese to say.' : 'The French translation.');
+    if (toJa && state.romaji) lines.push('Then a line containing only @@R, then the Hepburn rōmaji reading of your Japanese, with macrons (ō, ū).');
+    lines.push(toJa
+      ? 'Then a line containing only @@N and one short sentence in French, ONLY when your Japanese is not a plain translation of the user’s words (say in French what it asks or says) or when there is an important nuance or cultural pitfall to know. Otherwise write nothing more.'
+      : 'Then, ONLY if there is an important nuance, implied meaning or cultural point the user should know, a line containing only @@N, then one short sentence in French. Otherwise write nothing more.');
     if (ctx) lines.push('', 'Earlier in this conversation (context only, do not translate):', ctx);
-    lines.push('', 'Text to translate:', '"""', it.text, '"""');
+    lines.push('', toJa ? 'What the user typed:' : 'What the Japanese person said:', '"""', it.text, '"""');
     return lines.join('\n');
   }
   // Photo translation drawn over the original text, Google Lens style: Claude streams one JSON block per line.
