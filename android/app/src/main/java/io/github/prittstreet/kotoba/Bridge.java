@@ -6,6 +6,9 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.webkit.JavascriptInterface;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 /**
  * window.KotobaAndroid in the page (web/app.js). Called on a background thread:
  * everything that touches Android UI or services goes back to the main thread.
@@ -80,6 +83,19 @@ final class Bridge {
     @JavascriptInterface
     public void darkBars(boolean dark) {
         app.runOnUiThread(() -> app.darkBars(dark));
+    }
+
+    /** Key and workspace built into a private APK (empty in public builds): {"apiKey", "workspace"}. */
+    @JavascriptInterface
+    public String config() {
+        JSONObject c = new JSONObject();
+        try {
+            c.put("apiKey", BuildConfig.API_KEY);
+            c.put("workspace", BuildConfig.WORKSPACE);
+        } catch (JSONException e) {
+            return "{}";
+        }
+        return c.toString();
     }
 
     @JavascriptInterface

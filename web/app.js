@@ -6,6 +6,13 @@
   const MAX_ITEMS = 150;
   // Set by the Android app (MainActivity): native microphone, voices and clipboard.
   const NATIVE = window.KotobaAndroid || null;
+  // Key and workspace built into a private APK for friends (empty in public builds and in a browser).
+  const BUILTIN = (() => {
+    try {
+      const c = NATIVE ? JSON.parse(NATIVE.config()) : null;
+      return c && typeof c.apiKey === 'string' ? c : { apiKey: '', workspace: '' };
+    } catch (e) { return { apiKey: '', workspace: '' }; }
+  })();
   const $ = (s) => document.querySelector(s);
   const thread = $('#thread'), ta = $('#src'), form = $('#form'), sendBtn = $('#sendBtn');
   const cameraBtn = $('#cameraBtn'), galleryBtn = $('#galleryBtn'), banner = $('#banner'), toastEl = $('#toast');
@@ -93,17 +100,21 @@
       } catch (e) { /* try a lighter copy */ }
     }
   }
-  function getKey() {
+  // The key typed in the settings wins; otherwise the one built into the app, if any.
+  function storedKey() {
     try { return (localStorage.getItem(KEY_API) || '').trim(); } catch (e) { return memKey; }
   }
+  const usingBuiltin = () => !storedKey() && !!BUILTIN.apiKey;
+  function getKey() { return storedKey() || BUILTIN.apiKey || ''; }
   function setKey(k) {
     memKey = k;
     try { if (k) localStorage.setItem(KEY_API, k); else localStorage.removeItem(KEY_API); } catch (e) {}
   }
   // Only for keys not tied to one workspace (Console "personal" keys): the workspace each request runs in.
-  function getWorkspace() {
+  function storedWorkspace() {
     try { return (localStorage.getItem(KEY_WS) || '').trim(); } catch (e) { return memWs; }
   }
+  function getWorkspace() { return usingBuiltin() ? (BUILTIN.workspace || '') : storedWorkspace(); }
   function setWorkspace(w) {
     memWs = w;
     try { if (w) localStorage.setItem(KEY_WS, w); else localStorage.removeItem(KEY_WS); } catch (e) {}
@@ -1126,12 +1137,14 @@
   function openSettings(msg) {
     cancelListening();
     syncSilence();
-    keyInput.value = getKey();
-    wsInput.value = getWorkspace();
+    keyInput.value = storedKey();   // never shows the built-in key
+    wsInput.value = storedWorkspace();
+    keyInput.placeholder = BUILTIN.apiKey ? 'Clé fournie avec l’app' : 'sk-ant-…';
     keyInput.type = 'password';
     $('#keyShow').textContent = 'Afficher';
     if (msg) setKeyStatus(msg, 'bad');
     else if (keyProblem) setKeyStatus(copyFor(keyProblem), 'bad');
+    else if (usingBuiltin()) setKeyStatus('Kotoba utilise la clé fournie avec l’app. Tu peux en coller une autre ci-dessus.', 'ok');
     else setKeyStatus(getKey() ? 'Clé enregistrée sur ce téléphone.' : '', getKey() ? 'ok' : '');
     renderUsage();
     settingsEl.hidden = false;
@@ -1141,7 +1154,7 @@
   async function saveKey() {
     const k = keyInput.value.replace(/\s+/g, '');
     const w = wsInput.value.replace(/\s+/g, '');
-    if (!k) { setKeyStatus('Colle ta clé dans le champ.', 'bad'); return; }
+    if (!k && !BUILTIN.apiKey) { setKeyStatus('Colle ta clé dans le champ.', 'bad'); return; }
     if (w && !/^wrkspc_[A-Za-z0-9]+$/.test(w)) { setKeyStatus('L’ID du workspace commence par wrkspc_ : copie-le en entier, ou laisse le champ vide.', 'bad'); return; }
     setKey(k);
     setWorkspace(w);
@@ -1152,9 +1165,9 @@
     const btn = $('#keySave');
     btn.disabled = true;
     setKeyStatus('Test de la clé…');
-    const r = await testKey(k, w);
+    const r = await testKey(getKey(), getWorkspace()); // empty field: the key built into the app
     btn.disabled = false;
-    if (getKey() !== k || getWorkspace() !== w) return;
+    if (storedKey() !== k || storedWorkspace() !== w) return;
     if (!r.code) { setKeyStatus('Clé valide ✓ Tu peux traduire.', 'ok'); return; }
     if (KEY_CODES.has(r.code)) { keyProblem = r.code; syncBanner(); }
     if (r.code === 'bad_key') setKeyStatus('Clé refusée : vérifie que tu l’as copiée en entier.', 'bad');
@@ -1179,7 +1192,7 @@
     wsInput.value = '';
     keyProblem = '';
     syncBanner();
-    setKeyStatus('Clé supprimée de ce téléphone.');
+    setKeyStatus(BUILTIN.apiKey ? 'Clé supprimée : Kotoba reprend la clé fournie avec l’app.' : 'Clé supprimée de ce téléphone.');
   });
   silenceInput.addEventListener('input', () => {
     const v = Number(silenceInput.value);

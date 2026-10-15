@@ -6,6 +6,12 @@ plugins {
 def buildMinutes = (int) ((System.currentTimeMillis().intdiv(1000L) - 1767225600L).intdiv(60L))
 def buildDate = new Date().format('yyyy-MM-dd', TimeZone.getTimeZone('UTC'))
 
+// Optional key built into a private APK for friends, from android/kotoba-secrets.properties
+// (apiKey=…, workspace=…). That file is git-ignored: CI builds and public releases have no key.
+def secrets = new Properties()
+def secretsFile = rootProject.file('kotoba-secrets.properties')
+if (secretsFile.exists()) secretsFile.withInputStream { secrets.load(it) }
+
 android {
     namespace 'io.github.prittstreet.kotoba'
     compileSdk 36
@@ -16,6 +22,12 @@ android {
         targetSdk 36
         versionCode buildMinutes
         versionName "1.0 (${buildDate})"
+        buildConfigField 'String', 'API_KEY', "\"${secrets.getProperty('apiKey', '').trim()}\""
+        buildConfigField 'String', 'WORKSPACE', "\"${secrets.getProperty('workspace', '').trim()}\""
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     // The same key signs every build, so updates install over the previous version and keep its data.
