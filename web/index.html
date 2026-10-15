@@ -88,6 +88,8 @@
         <input id="keyInput" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk-ant-…" aria-label="Clé API">
         <button id="keyShow" class="txt-btn" type="button">Afficher</button>
       </div>
+      <label class="ws-label" for="wsInput">Workspace, seulement si ta clé n’est liée à aucun</label>
+      <input id="wsInput" class="ws-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="wrkspc_… (sinon laisse vide)">
       <div class="set-acts">
         <button id="keyDelete" class="txt-btn" type="button">Supprimer</button>
         <button id="keySave" class="txt-btn primary" type="button">Enregistrer et tester</button>
@@ -96,7 +98,8 @@
       <ol class="steps">
         <li>Ouvre <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">platform.claude.com</a> et connecte-toi (même compte que Claude).</li>
         <li><a href="https://platform.claude.com/settings/billing" target="_blank" rel="noopener">Billing</a> : ajoute un peu de crédit. 5 $ suffisent pour des milliers de phrases.</li>
-        <li>API Keys : « Create Key », copie la clé et colle-la ci-dessus.</li>
+        <li>API Keys : « Create key ». Lie la clé à un workspace (par exemple Default), puis copie-la et colle-la ci-dessus.</li>
+        <li>Clé déjà créée sans workspace ? Colle l’ID du workspace (colonne ID de la page <a href="https://platform.claude.com/settings/workspaces" target="_blank" rel="noopener">Workspaces</a>) dans le second champ.</li>
       </ol>
       <p class="hint">C’est facturé à l’usage, à part de ton abonnement Claude.</p>
     </section>

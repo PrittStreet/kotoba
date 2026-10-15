@@ -21,6 +21,9 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
   `anthropic-version: 2023-06-01` et `anthropic-dangerous-direct-browser-access: true`.
   Clé saisie dans les réglages, stockée seulement dans le `localStorage` (`kotoba.apikey`),
   jamais dans le dépôt. Le test de clé utilise `GET /v1/models` (gratuit).
+  Les clés « personnelles » du Console (`sk-ant-usr-…`) non liées à un workspace exigent l'en-tête
+  `anthropic-workspace-id` : champ optionnel « Workspace » dans les réglages (`kotoba.workspace`).
+  L'app ne peut pas le trouver seule : l'Admin API (`/v1/organizations/…`) refuse le CORS.
 - Modèles : `claude-haiku-5-5` (texte « Rapide »), `claude-sonnet-5-5` (« Soigné » et photos),
   `output_config.effort: "low"`. Sonnet avec `fallbacks: "default"` + `anthropic-beta:
   server-side-fallback-2026-07-01` ; pas de fallback possible sur Haiku. `stop_reason: "refusal"` géré.

@@ -153,6 +153,9 @@ a{color:var(--ai)}
 .keyrow{display:flex;gap:8px;align-items:center}
 .keyrow input{flex:1;min-width:0;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:inherit;font-family:ui-monospace,"Roboto Mono",monospace;font-size:.9rem;background:var(--paper);color:var(--ink)}
 .keyrow input:focus{outline:none;border-color:var(--ai)}
+.ws-label{font-size:.84rem;color:var(--muted);margin-bottom:-4px}
+.ws-input{width:100%;border:1px solid var(--line);border-radius:12px;padding:9px 12px;font:inherit;font-family:ui-monospace,"Roboto Mono",monospace;font-size:.88rem;background:var(--paper);color:var(--ink)}
+.ws-input:focus{outline:none;border-color:var(--ai)}
 .set-acts{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 .key-status{margin:0;font-size:.9rem;min-height:1.35em}
 .key-status.ok{color:var(--ai)}
