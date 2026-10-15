@@ -43,6 +43,7 @@
     kbd: SV('<rect x="2.5" y="6" width="19" height="12" rx="2.2"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M8 14.2h8"/>')
   };
   kbdBtns.forEach((b) => { b.innerHTML = ICONS.kbd; });
+  micBtns.forEach((b) => b.insertAdjacentHTML('beforeend', '<svg class="ring" aria-hidden="true"><rect pathLength="100"/></svg>'));
   $('#lvClose').innerHTML = ICONS.close;
   favBtn.innerHTML = ICONS.star;
   clearBtn.innerHTML = ICONS.trash;
@@ -796,18 +797,22 @@
         rec = r;
         let finals = '', interim = '', failed = false, timer = 0;
         // Keep listening through pauses; stop after silenceMs without new words.
-        const arm = () => { clearTimeout(timer); timer = setTimeout(() => { if (rec === r) r.stop(); }, silenceMs); };
+        const arm = (ms) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => { if (rec === r) r.stop(); }, ms);
+          if (rec === r) onSpeech({ type: 'timer', ms });
+        };
         r.lang = lang;
         r.interimResults = true;
         r.continuous = true;
         r.maxAlternatives = 1;
-        r.onstart = () => { if (rec === r) { arm(); onSpeech({ type: 'ready' }); } };
+        r.onstart = () => { if (rec === r) { arm(Math.max(silenceMs, 6000)); onSpeech({ type: 'ready' }); } };
         r.onresult = (e) => {
           finals = ''; interim = '';
           for (let i = 0; i < e.results.length; i++) {
             if (e.results[i].isFinal) finals += e.results[i][0].transcript; else interim += e.results[i][0].transcript;
           }
-          arm();
+          arm(silenceMs);
           if (rec === r) onSpeech({ type: 'partial', text: finals + interim });
         };
         r.onerror = (e) => {
@@ -837,6 +842,8 @@
       const lang = b.dataset.mic;
       const on = !!listening && listening.lang === lang;
       b.classList.toggle('listening', on);
+      b.classList.toggle('ending', on && listening.ending);
+      if (!on) drainRing(b, 0);
       b.setAttribute('aria-pressed', String(on));
       b.setAttribute('aria-label', on ? (lang === 'ja' ? '聞き取りを終える' : 'Arrêter l’écoute') : MIC_NAME[lang]);
       b.querySelector('.ico').innerHTML = on ? ICONS.stop : ICONS.mic;
@@ -920,6 +927,16 @@
       default: return 'La dictée a échoué. Réessaie.';
     }
   }
+  // The outline of the listening key drains over the silence left (ms) before the dictation ends;
+  // the engines send a new 'timer' each time they hear words. 0 stops it.
+  function drainRing(b, ms) {
+    const rect = b.querySelector('.ring rect');
+    if (!rect) return;
+    if (b.ringAnim) { b.ringAnim.cancel(); b.ringAnim = null; }
+    if (ms > 0 && rect.animate) {
+      b.ringAnim = rect.animate([{ strokeDashoffset: 0 }, { strokeDashoffset: 100 }], { duration: ms, easing: 'linear', fill: 'forwards' });
+    }
+  }
   // What the dictation did, for Settings > Dictée (the Android app adds its own lines).
   const speechLog = [];
   function logSpeech(line) {
@@ -934,7 +951,10 @@
       logSpeech('page : ' + (ev.type === 'final' ? 'texte reçu (' + (ev.text || '').length + ' caractères)' : 'erreur ' + ev.code) + (listening ? '' : ', ignoré'));
     }
     if (!listening || !ev) return;
-    if (ev.type === 'partial') {
+    if (ev.type === 'timer') {
+      const b = micBtns.find((x) => x.dataset.mic === listening.lang);
+      if (b && !listening.ending) drainRing(b, Number(ev.ms) || 0);
+    } else if (ev.type === 'partial') {
       listening.text = ev.text || '';
       ta.value = listening.text;
       autosize();
@@ -956,7 +976,21 @@
     }
   }
   // Called by the Android app: kotobaNative.speech({ type, text, code })
-  window.kotobaNative = { speech: onSpeech };
+  // Keyboards that ignore the language hint (Samsung's): after the keyboard key, the app reports
+  // the language the keyboard really shows; say once how to switch.
+  const kbdTold = {};
+  function onKeyboard(ev) {
+    if (!ev || !ev.wanted) return;
+    const shown = String(ev.actual || '').toLowerCase().replace('_', '-');
+    logSpeech('clavier : voulu ' + ev.wanted + ', affiché ' + (shown || '?') + ' (' + (ev.ime || '?') + ')');
+    if (shown.startsWith(ev.wanted) || kbdTold[ev.wanted] || document.activeElement !== ta) return;
+    kbdTold[ev.wanted] = true;
+    const lang = ev.wanted === 'ja' ? 'japonais' : 'français';
+    toast(/samsung|com\.sec\./i.test(ev.ime || '')
+      ? 'Le clavier Samsung ne change pas de langue tout seul : touche 🌐 ou glisse la barre d’espace pour passer en ' + lang + '. Avec le clavier Gboard, Kotoba le fait pour toi.'
+      : 'Le clavier n’est pas passé en ' + lang + ' : touche 🌐 sur le clavier pour changer de langue.', 7000);
+  }
+  window.kotobaNative = { speech: onSpeech, keyboard: onKeyboard };
 
   // ---------- actions ----------
   function addItem(it) {
@@ -1076,16 +1110,26 @@
   }));
   romajiBtn.addEventListener('click', () => { state.romaji = !state.romaji; syncPrefs(); save(); });
   favBtn.addEventListener('click', () => { state.favOnly = !state.favOnly; syncPrefs(); render(); });
-  clearBtn.addEventListener('click', () => { confirmBar.hidden = !confirmBar.hidden; });
-  $('#cancelClear').addEventListener('click', () => { confirmBar.hidden = true; });
-  $('#doClear').addEventListener('click', () => {
-    if (busy && ctl) ctl.abort();
-    state.items.filter((i) => !i.fav).forEach((i) => forgetPhoto(i.id));
-    state.items = state.items.filter((i) => i.fav);
-    confirmBar.hidden = true;
-    save(); render();
-    toast('Historique effacé');
+  clearBtn.addEventListener('click', () => {
+    $('#keepFavs').hidden = !state.items.some((i) => i.fav);
+    confirmBar.hidden = !confirmBar.hidden;
   });
+  $('#cancelClear').addEventListener('click', () => { confirmBar.hidden = true; });
+  // keepFavs: only the favourites stay. Otherwise everything goes (the settings and the key stay).
+  function clearMessages(keepFavs) {
+    if (busy && ctl) ctl.abort();
+    cancelListening();
+    state.items.filter((i) => !(keepFavs && i.fav)).forEach((i) => forgetPhoto(i.id));
+    state.items = keepFavs ? state.items.filter((i) => i.fav) : [];
+    state.favOnly = false;
+    ta.value = '';
+    autosize();
+    confirmBar.hidden = true;
+    syncPrefs(); save(); render();
+    toast(keepFavs ? 'Messages effacés, favoris gardés' : 'Tout est effacé');
+  }
+  $('#doClear').addEventListener('click', () => clearMessages(false));
+  $('#keepFavs').addEventListener('click', () => clearMessages(true));
 
   // Each label opens its own picker natively (more reliable in web views than a scripted click):
   // the camera input asks for the rear camera, the gallery input for an existing photo.

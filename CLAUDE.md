@@ -34,8 +34,9 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
   - Pont JS `window.KotobaAndroid` (`Bridge.java`) : `canListen`,
     `startListening("fr-FR"|"ja-JP", silenceMs)`, `stopListening`, `cancelListening`,
     `keyboard("fr"|"ja", show)`, `speak(text, "fr"|"ja")`, `stopSpeaking`, `copy`, `insets`,
-    `darkBars`, `version`. Retours vers la page : `kotobaNative.speech({type, text, code})`
-    (`ready`, `partial`, `final`, `error`), `kotobaInsets(top, bottom)`, `kotobaBack()`.
+    `darkBars`, `config`, `version`. Retours vers la page : `kotobaNative.speech({type, text, code})`
+    (`ready`, `partial`, `final`, `error`, `log`, `timer` avec `ms`), `kotobaNative.keyboard({wanted,
+    actual, ime})`, `kotobaInsets(top, bottom)`, `kotobaBack()`.
   - Micro : `SpeechRecognizer` d'Android (`SpeechInput.java`), langue imposée par le bouton :
     c'est ce qui permet de dicter en japonais sans toucher au clavier. Le recognizer coupe seul
     après ~1 s de silence : une dictée enchaîne donc plusieurs sessions, sur le même recognizer et
@@ -45,8 +46,12 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     écrite dans le journal de dictée (Réglages > Dictée, événements `log`) pour le dépannage sur le
     téléphone. Hors Android, la page se rabat sur la Web Speech API (`continuous` + même délai),
     puis sur le micro du clavier.
+  - Minuteur : chaque fois que le délai de silence repart (début, mots entendus), un événement
+    `timer` fait se vider le contour du bouton micro (SVG `.ring`, `pathLength=100`) sur cette durée.
   - Clavier : petit bouton à côté de chaque micro. `KotobaWebView` donne la langue au clavier via
-    `EditorInfo.hintLocales` (Gboard la suit si elle est installée), relu après `restartInput`.
+    `EditorInfo.hintLocales`, relu après `restartInput`. Gboard la suit ; le clavier Samsung non.
+    900 ms après, l'app lit la langue réellement affichée (`getCurrentInputMethodSubtype`) et la
+    page explique une fois comment changer (🌐 / barre d'espace, ou installer Gboard).
   - Photos : `capture` → appli appareil photo via `FileProvider` (pas de permission CAMERA),
     sinon sélecteur de photos. Voix : `TextToSpeech` (`Voice.java`).
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec

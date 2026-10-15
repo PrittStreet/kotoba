@@ -116,14 +116,18 @@ a{color:var(--ai)}
 /* each language: a wide microphone key and a small keyboard key */
 .spk-pair{--accent:var(--ai);--accent-soft:var(--ai-soft);--on-accent:var(--on-ai);display:flex;gap:5px;min-width:0}
 .spk-pair.ja{--accent:var(--shu);--accent-soft:var(--shu-soft);--on-accent:var(--on-shu)}
-.spk{flex:1;border:1.5px solid var(--accent);border-radius:14px;padding:12px 8px;font-size:.98rem;font-weight:500;color:var(--accent);background:var(--accent-soft);display:flex;align-items:center;justify-content:center;gap:8px;min-width:0;white-space:nowrap;overflow:hidden}
+.spk{position:relative;flex:1;border:1.5px solid var(--accent);border-radius:14px;padding:12px 8px;font-size:.98rem;font-weight:500;color:var(--accent);background:var(--accent-soft);display:flex;align-items:center;justify-content:center;gap:8px;min-width:0;white-space:nowrap;overflow:hidden}
 .kbd{flex:none;width:44px;border:1.5px solid var(--accent);border-radius:14px;color:var(--accent);background:var(--surface);display:grid;place-items:center}
 .kbd svg{width:21px;height:21px}
 .kbd:active{background:var(--accent-soft)}
 .spk .lbl{overflow:hidden;text-overflow:ellipsis}
 .spk svg{flex:none;width:20px;height:20px}
-.spk.listening{background:var(--accent);color:var(--on-accent);animation:listen 1.3s ease-out infinite}
-@keyframes listen{0%{box-shadow:0 0 0 0 var(--accent)}100%{box-shadow:0 0 0 12px transparent}}
+.spk.listening{background:var(--accent);color:var(--on-accent)}
+/* countdown: the outline drains over the silence left before the dictation ends */
+.spk svg.ring{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0}
+.spk.listening svg.ring{opacity:1}
+.spk.listening.ending svg.ring{opacity:0}
+.ring rect{x:2.5px;y:2.5px;width:calc(100% - 5px);height:calc(100% - 5px);rx:11px;fill:none;stroke:var(--on-accent);stroke-width:3;stroke-dasharray:100;stroke-dashoffset:0}
 .field{position:relative;display:flex;align-items:flex-end;gap:6px;margin:0}
 .field textarea{flex:1;min-width:0;resize:none;border:1px solid var(--line);border-radius:16px;padding:11px 14px;font:inherit;font-size:1rem;line-height:1.4;max-height:150px;background:var(--paper);color:var(--ink)}
 .field textarea::placeholder{color:var(--muted);opacity:.85}
@@ -220,4 +224,4 @@ a{color:var(--ai)}
 
 [hidden]{display:none !important}
 
-@media (prefers-reduced-motion: reduce){.dots i{animation:none;opacity:.6}.stage.scan::after{animation:none;top:0}.layer{transition:none}.spk.listening{animation:none}}
+@media (prefers-reduced-motion: reduce){.dots i{animation:none;opacity:.6}.stage.scan::after{animation:none;top:0}.layer{transition:none}}

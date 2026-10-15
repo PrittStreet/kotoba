@@ -71,7 +71,9 @@ final class SpeechInput implements RecognitionListener {
         active = true;
         startedAt = SystemClock.elapsedRealtime();
         log("début " + lang + ", fin après " + this.silenceMs + " ms de silence");
-        main.postDelayed(silenceOver, Math.max(this.silenceMs, FIRST_WORDS_MS));
+        long first = Math.max(this.silenceMs, FIRST_WORDS_MS);
+        main.postDelayed(silenceOver, first);
+        app.emitTimer(first);
         create();
         listen();
     }
@@ -127,6 +129,7 @@ final class SpeechInput implements RecognitionListener {
         retries = 0;
         main.removeCallbacks(silenceOver);
         main.postDelayed(silenceOver, silenceMs);
+        app.emitTimer(silenceMs);
     }
 
     /** Silent long enough, or the button was tapped. */
