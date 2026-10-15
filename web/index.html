@@ -50,9 +50,15 @@
       <span id="bannerText"></span>
       <button id="bannerBtn" class="txt-btn" type="button">Réglages</button>
     </div>
-    <div class="speakers" role="group" aria-label="Dicter">
-      <button type="button" class="spk fr" data-mic="fr" aria-pressed="false"><span class="ico"></span><span class="lbl">Parler français</span></button>
-      <button type="button" class="spk ja" data-mic="ja" aria-pressed="false" lang="ja"><span class="ico"></span><span class="lbl">日本語で話す</span></button>
+    <div class="speakers" role="group" aria-label="Parler ou écrire">
+      <div class="spk-pair fr">
+        <button type="button" class="spk" data-mic="fr" aria-pressed="false"><span class="ico"></span><span class="lbl">Français</span></button>
+        <button type="button" class="kbd" data-kbd="fr" aria-label="Écrire en français"></button>
+      </div>
+      <div class="spk-pair ja" lang="ja">
+        <button type="button" class="spk" data-mic="ja" aria-pressed="false"><span class="ico"></span><span class="lbl">日本語</span></button>
+        <button type="button" class="kbd" data-kbd="ja" aria-label="日本語で入力"></button>
+      </div>
     </div>
     <form id="form" class="field" autocomplete="off">
       <label id="cameraBtn" class="round photo" for="cameraInput" role="button" tabindex="0" aria-label="Prendre une photo"></label>
@@ -102,6 +108,12 @@
         <li>Clé déjà créée sans workspace ? Colle l’ID du workspace (colonne ID de la page <a href="https://platform.claude.com/settings/workspaces" target="_blank" rel="noopener">Workspaces</a>) dans le second champ.</li>
       </ol>
       <p class="hint">C’est facturé à l’usage, à part de ton abonnement Claude.</p>
+    </section>
+    <section class="set-block">
+      <h3>Dictée</h3>
+      <label class="range-row" for="silenceInput"><span>Fin de la dictée après un silence de</span><output id="silenceOut" for="silenceInput"></output></label>
+      <input id="silenceInput" class="range" type="range" min="1" max="15" step="0.5">
+      <p class="hint">Plus c’est long, plus tu peux faire de pauses en parlant. Touche à nouveau le micro pour finir tout de suite.</p>
     </section>
     <section class="set-block">
       <h3>Consommation</h3>

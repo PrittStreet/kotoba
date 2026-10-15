@@ -31,13 +31,18 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
 - `android/` : projet Gradle (AGP 8.13, Java, minSdk 26, targetSdk 36, package
   `io.github.prittstreet.kotoba`). `MainActivity` affiche `web/` (copié dans les assets) via
   `WebViewAssetLoader` sur `https://appassets.androidplatform.net/assets/index.html`.
-  - Pont JS `window.KotobaAndroid` (`Bridge.java`) : `canListen`, `startListening("fr-FR"|"ja-JP")`,
-    `stopListening`, `cancelListening`, `speak(text, "fr"|"ja")`, `stopSpeaking`, `copy`, `insets`,
+  - Pont JS `window.KotobaAndroid` (`Bridge.java`) : `canListen`,
+    `startListening("fr-FR"|"ja-JP", silenceMs)`, `stopListening`, `cancelListening`,
+    `keyboard("fr"|"ja", show)`, `speak(text, "fr"|"ja")`, `stopSpeaking`, `copy`, `insets`,
     `darkBars`, `version`. Retours vers la page : `kotobaNative.speech({type, text, code})`
     (`ready`, `partial`, `final`, `error`), `kotobaInsets(top, bottom)`, `kotobaBack()`.
   - Micro : `SpeechRecognizer` d'Android (`SpeechInput.java`), langue imposée par le bouton :
-    c'est ce qui permet de dicter en japonais sans toucher au clavier. Hors Android, la page
-    se rabat sur la Web Speech API, puis sur le micro du clavier.
+    c'est ce qui permet de dicter en japonais sans toucher au clavier. Le recognizer coupe seul
+    après 1–2 s de silence : une dictée enchaîne donc plusieurs sessions jusqu'au délai de silence
+    choisi dans les réglages (`state.silence`, 5 s par défaut). Hors Android, la page se rabat sur
+    la Web Speech API (`continuous` + même délai), puis sur le micro du clavier.
+  - Clavier : petit bouton à côté de chaque micro. `KotobaWebView` donne la langue au clavier via
+    `EditorInfo.hintLocales` (Gboard la suit si elle est installée), relu après `restartInput`.
   - Photos : `capture` → appli appareil photo via `FileProvider` (pas de permission CAMERA),
     sinon sélecteur de photos. Voix : `TextToSpeech` (`Voice.java`).
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec

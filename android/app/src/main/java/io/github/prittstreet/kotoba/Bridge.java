@@ -22,22 +22,31 @@ final class Bridge {
         return app.canListen;
     }
 
-    /** lang: "fr-FR" or "ja-JP". Results come back through MainActivity.emitSpeech. */
+    /**
+     * lang: "fr-FR" or "ja-JP". Dictation ends after silenceMs without new words.
+     * Results come back through MainActivity.emitSpeech.
+     */
     @JavascriptInterface
-    public void startListening(String lang) {
-        app.runOnUiThread(() -> app.listen(lang));
+    public void startListening(String lang, int silenceMs) {
+        app.runOnUiThread(() -> app.listen(lang, silenceMs));
     }
 
-    /** Ends the sentence now: what was heard is sent as the final result. */
+    /** Ends the dictation now: what was heard is sent as the final result. */
     @JavascriptInterface
     public void stopListening() {
         app.runOnUiThread(() -> app.speech.stop());
     }
 
-    /** Drops the sentence, no result. */
+    /** Drops the dictation, no result. */
     @JavascriptInterface
     public void cancelListening() {
         app.runOnUiThread(() -> app.speech.cancel());
+    }
+
+    /** Keyboard language for the text field, "fr" or "ja"; show: also open the keyboard. */
+    @JavascriptInterface
+    public void keyboard(String lang, boolean show) {
+        app.runOnUiThread(() -> app.keyboard(lang, show));
     }
 
     /** lang: "fr" or "ja". */
