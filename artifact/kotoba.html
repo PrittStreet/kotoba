@@ -1,0 +1,1090 @@
+<title>Kotoba</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@800&text=%E8%A8%80%E8%91%89&display=swap">
+<style>
+/* Layout: one-screen phone app — header with brand and settings, scrolling thread of translation cards, composer docked at the bottom with two speaker keys */
+:root{
+  --paper:#F2F3F8; --surface:#FFFFFF; --ink:#151A2C; --muted:#5D6479; --line:#DCE0EB;
+  --ai:#25427C; --ai-soft:#E2E8F5; --on-ai:#FFFFFF;
+  --shu:#BD3F2A; --shu-soft:#F8E4DF; --on-shu:#FFFFFF;
+  --danger:#B3261E; --on-danger:#FFFFFF;
+  --f-ui:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP","Yu Gothic",system-ui,sans-serif;
+  --f-seal:"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;
+  --r:14px;
+  /* photo overlays and the photo viewer keep one look in both themes: they sit on a photograph */
+  --ov-bg:rgba(248,249,252,.92); --ov-fg:#10131F; --ov-edge:rgba(16,19,31,.14);
+  --viewer-bg:#0B0D16; --viewer-fg:#F2F3F8; --viewer-ctl:rgba(242,243,248,.14);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0E1120; --surface:#171B2D; --ink:#E8EAF3; --muted:#9AA1B7; --line:#283049;
+    --ai:#93ABEB; --ai-soft:#212A47; --on-ai:#0E1120;
+    --shu:#EA7A63; --shu-soft:#3A2321; --on-shu:#0E1120;
+    --danger:#F2B8B5; --on-danger:#0E1120;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0E1120; --surface:#171B2D; --ink:#E8EAF3; --muted:#9AA1B7; --line:#283049;
+  --ai:#93ABEB; --ai-soft:#212A47; --on-ai:#0E1120;
+  --shu:#EA7A63; --shu-soft:#3A2321; --on-shu:#0E1120;
+  --danger:#F2B8B5; --on-danger:#0E1120;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-ui);font-size:16px;line-height:1.5;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+:focus-visible{outline:2px solid var(--ai);outline-offset:2px}
+svg{display:block}
+
+.app{height:100%;max-width:720px;margin:0 auto;display:flex;flex-direction:column}
+.band{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+
+/* Header */
+.top{flex:none;padding-block:10px 10px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+.brandrow{display:flex;align-items:center;gap:10px}
+.seal b{font-weight:800}
+.seal{flex:none;width:34px;height:34px;border-radius:7px;background:var(--shu);color:var(--on-shu);display:grid;place-items:center;font-family:var(--f-seal);font-weight:800;font-size:13px;line-height:1}
+.seal span{display:flex;flex-direction:column;align-items:center;gap:1px}
+.brand{display:flex;flex-direction:column;line-height:1.2;min-width:0}
+.name{font-weight:700;font-size:1.15rem;letter-spacing:.01em}
+.pair{font-size:.74rem;color:var(--muted)}
+.spacer{flex:1}
+.icon-btn{flex:none;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;color:var(--muted)}
+.icon-btn svg{width:22px;height:22px}
+.icon-btn[aria-pressed="true"]{background:var(--shu-soft);color:var(--shu)}
+.icon-btn[aria-pressed="true"] svg path{fill:currentColor}
+.prefs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin-inline:-2px;padding-inline:2px}
+.prefs::-webkit-scrollbar{display:none}
+.seg{flex:none;display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px}
+.seg button{padding:5px 11px;border-radius:999px;font-size:.82rem;color:var(--muted);white-space:nowrap}
+.seg button[aria-pressed="true"]{background:var(--ai);color:var(--on-ai);font-weight:500}
+.chip{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:5px 12px;font-size:.82rem;color:var(--muted);white-space:nowrap}
+.chip[aria-pressed="true"]{border-color:var(--ai);color:var(--ai);background:var(--ai-soft);font-weight:500}
+.confirm{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.9rem;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 8px 8px 12px}
+.txt-btn{padding:6px 14px;border-radius:999px;border:1px solid var(--line);font-size:.86rem;background:var(--surface);color:var(--ink)}
+.txt-btn.danger{background:var(--danger);color:var(--on-danger);border-color:transparent}
+
+/* Thread */
+.thread{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-block:16px 20px;display:flex;flex-direction:column;gap:14px}
+.intro{margin:0;color:var(--muted);font-size:.9rem;max-width:40ch}
+.card{flex:none;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 14px 6px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card.example{border-style:dashed}
+.badge{align-self:flex-start;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:1px 7px;margin-bottom:-2px}
+.src{display:flex;gap:10px;align-items:flex-start;color:var(--muted);font-size:.93rem;min-width:0}
+.src p{margin:0;min-width:0;overflow-wrap:anywhere;white-space:pre-wrap}
+.tag{flex:none;font-size:.66rem;font-weight:700;letter-spacing:.09em;padding:3px 6px;border-radius:5px;margin-top:2px;line-height:1.2}
+.tag.fr{background:var(--ai-soft);color:var(--ai)}
+.tag.ja{background:var(--shu-soft);color:var(--shu)}
+.thumb{flex:none;width:64px;height:64px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
+.out{display:flex;flex-direction:column;gap:4px;min-width:0;padding-bottom:6px}
+.tr{margin:0;font-size:1.3rem;line-height:1.45;font-weight:500;overflow-wrap:anywhere;white-space:pre-wrap}
+.out[lang="ja"] .tr{font-size:1.45rem;line-height:1.6;letter-spacing:.02em}
+.ro{margin:0;color:var(--muted);font-size:.96rem;overflow-wrap:anywhere}
+.note{margin:6px 0 0;font-size:.86rem;color:var(--muted);border-left:2px solid var(--shu);padding-left:10px}
+.rows{display:flex;flex-direction:column;gap:10px}
+.rows .lead{margin:0;font-weight:700;font-size:1.02rem}
+.rows .plain{margin:0;color:var(--muted);font-size:.9rem}
+.row{display:flex;flex-direction:column;gap:1px;min-width:0}
+.row .orig{color:var(--muted);font-size:.9rem;overflow-wrap:anywhere}
+.row .trl{font-size:1.06rem;font-weight:500;overflow-wrap:anywhere}
+.dots{display:inline-flex;gap:6px;padding:8px 0 10px}
+.dots i{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:blink 1.1s infinite ease-in-out}
+.dots i:nth-child(2){animation-delay:.18s}
+.dots i:nth-child(3){animation-delay:.36s}
+@keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
+.err{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:var(--danger);font-size:.9rem;padding-bottom:8px}
+.acts{display:flex;flex-wrap:wrap;gap:2px;margin-inline:-8px;border-top:1px solid var(--line);padding-top:2px}
+.act{display:inline-flex;align-items:center;gap:6px;padding:9px 8px;border-radius:10px;color:var(--muted);font-size:.8rem}
+.act svg{width:19px;height:19px}
+.act:active{background:var(--ai-soft)}
+.act.on{color:var(--shu)}
+.act.on svg path{fill:currentColor}
+
+/* Composer */
+.composer{flex:none;background:var(--surface);border-top:1px solid var(--line);padding-block:10px 12px;display:flex;flex-direction:column;gap:10px}
+.banner{margin:0;font-size:.86rem;padding:9px 12px;border-radius:12px;background:var(--shu-soft);color:var(--ink)}
+.speakers{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.spk{border:1.5px solid var(--line);border-radius:12px;padding:9px 8px;font-size:.93rem;font-weight:500;color:var(--muted);background:var(--paper);display:flex;align-items:center;justify-content:center;gap:8px;min-width:0;white-space:nowrap}
+.spk .dot{flex:none;width:8px;height:8px;border-radius:50%;background:currentColor;opacity:.45}
+.spk.fr[aria-pressed="true"]{border-color:var(--ai);color:var(--ai);background:var(--ai-soft)}
+.spk.ja[aria-pressed="true"]{border-color:var(--shu);color:var(--shu);background:var(--shu-soft)}
+.spk[aria-pressed="true"] .dot{opacity:1}
+.field{display:flex;align-items:flex-end;gap:8px;margin:0}
+.field textarea{flex:1;min-width:0;resize:none;border:1px solid var(--line);border-radius:16px;padding:11px 14px;font:inherit;font-size:1rem;line-height:1.4;max-height:150px;background:var(--paper);color:var(--ink)}
+.field textarea::placeholder{color:var(--muted);opacity:.85}
+.field textarea:focus{outline:none;border-color:var(--ai)}
+.round{flex:none;width:46px;height:46px;border-radius:50%;display:grid;place-items:center}
+.round svg{width:22px;height:22px}
+.photo{border:1px solid var(--line);background:var(--paper);color:var(--muted);cursor:pointer}
+.vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;opacity:0;overflow:hidden;clip:rect(0 0 0 0);pointer-events:none}
+.field{position:relative;gap:6px}
+.round.photo{width:42px;height:42px;margin-bottom:2px}
+.round.photo svg{width:20px;height:20px}
+.send{background:var(--ai);color:var(--on-ai)}
+.send.ja{background:var(--shu);color:var(--on-shu)}
+.send.stop{background:var(--ink);color:var(--paper)}
+.send:disabled{opacity:.4;cursor:default}
+
+/* Big view for showing the phone to someone */
+.show{position:fixed;inset:0;z-index:20;background:var(--paper);display:flex;flex-direction:column;gap:12px;padding-top:calc(12px + env(safe-area-inset-top,0px));padding-bottom:calc(20px + env(safe-area-inset-bottom,0px));padding-left:max(20px,env(safe-area-inset-left,0px));padding-right:max(20px,env(safe-area-inset-right,0px))}
+.show .close{align-self:flex-end}
+.big{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;justify-content:center;gap:16px}
+.from{margin:0;font-size:.88rem;color:var(--muted)}
+.bigtr{margin:0;font-size:clamp(1.9rem,8.5vw,3.4rem);line-height:1.45;font-weight:700;overflow-wrap:anywhere;white-space:pre-wrap}
+.bigro{margin:0;font-size:1.1rem;color:var(--muted);overflow-wrap:anywhere}
+.showacts{display:flex;justify-content:center}
+.showacts .txt-btn{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;font-size:1rem}
+.showacts svg{width:20px;height:20px}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(150px + env(safe-area-inset-bottom,0px));z-index:30;background:var(--ink);color:var(--paper);padding:8px 16px;border-radius:999px;font-size:.88rem;max-width:calc(100% - 32px);text-align:center}
+
+.spk svg{flex:none;width:18px;height:18px}
+
+/* Photo translated in place */
+.lens{display:flex;flex-direction:column;gap:8px;min-width:0}
+.stage{position:relative;align-self:center;width:100%;max-width:100%;border-radius:10px;overflow:hidden;background:var(--line)}
+.stage img{position:absolute;inset:0;width:100%;height:100%;max-width:none;display:block;object-fit:fill}
+.layer{position:absolute;inset:0;transition:opacity .2s}
+.stage.orig .layer{opacity:0;pointer-events:none}
+.ov{position:absolute;display:flex;align-items:center;justify-content:center;padding:0 2px;background:var(--ov-bg);color:var(--ov-fg);border-radius:3px;box-shadow:0 0 0 1px var(--ov-edge);font-family:var(--f-ui);font-weight:500;line-height:1.08;text-align:center;overflow:hidden;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+.ov span{display:block;width:100%;overflow-wrap:normal;word-break:normal}
+.ov:focus-visible{outline:2px solid var(--shu);outline-offset:1px}
+.stage.scan::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--ai);box-shadow:0 0 14px 3px var(--ai);animation:scan 1.8s ease-in-out infinite alternate}
+@keyframes scan{from{top:0}to{top:calc(100% - 3px)}}
+.lensbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lensbar .status{flex:1;min-width:0;font-size:.85rem;color:var(--muted)}
+.lensbar .chip, .lensbar .txt-btn{padding:5px 12px;font-size:.82rem}
+.found summary{cursor:pointer;color:var(--muted);font-size:.88rem;padding:4px 0}
+.found .rows{padding-top:8px}
+
+/* Detail of one translated block */
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--surface);color:var(--ink);border-top:1px solid var(--line);border-radius:18px 18px 0 0;box-shadow:0 -10px 30px rgba(0,0,0,.25);padding-bottom:env(safe-area-inset-bottom,0px)}
+.sheet-in{max-width:720px;margin:0 auto;padding-block:14px 16px;display:flex;flex-direction:column;gap:6px}
+.sheet-o{margin:0;color:var(--muted);font-size:.95rem;overflow-wrap:anywhere}
+.sheet-t{margin:0;font-size:1.25rem;font-weight:500;overflow-wrap:anywhere}
+.sheet-acts{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;padding-top:6px}
+
+/* Full-screen photo viewer */
+.lensview{position:fixed;inset:0;z-index:30;background:var(--viewer-bg);color:var(--viewer-fg);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+.lv-bar{flex:none;display:flex;align-items:center;gap:8px;padding-block:6px;padding-left:max(8px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px))}
+.lv-bar .icon-btn{color:var(--viewer-fg)}
+.lv-title{flex:1;min-width:0;margin:0;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lv-bar .chip{background:var(--viewer-ctl);border-color:transparent;color:var(--viewer-fg)}
+.lv-bar .chip[aria-pressed="true"]{background:var(--viewer-fg);color:var(--viewer-bg)}
+.lv-scroll{flex:1;min-height:0;overflow:auto;display:flex;-webkit-overflow-scrolling:touch}
+.lv-wrap{flex:none;margin:auto}
+.lv-wrap .stage{border-radius:0;width:100%}
+.lv-zoom{position:absolute;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(18px + env(safe-area-inset-bottom,0px));display:flex;align-items:center;gap:2px;background:var(--viewer-fg);color:var(--viewer-bg);border-radius:999px;padding:4px}
+.lv-zoom button{width:40px;height:40px;border-radius:50%;font-size:1.4rem;line-height:1;color:var(--viewer-bg)}
+.lv-zoom span{min-width:3ch;text-align:center;font-size:.85rem;font-variant-numeric:tabular-nums}
+.lv-hint{position:absolute;left:max(16px,env(safe-area-inset-left,0px));bottom:calc(30px + env(safe-area-inset-bottom,0px));margin:0;font-size:.8rem;opacity:.75;max-width:55%}
+
+@media (prefers-reduced-motion: reduce){.dots i{animation:none;opacity:.6}.stage.scan::after{animation:none;top:0}.layer{transition:none}}
+</style>
+
+<div class="app">
+  <header class="top band">
+    <div class="brandrow">
+      <span class="seal" aria-hidden="true"><span><b>言</b><b>葉</b></span></span>
+      <div class="brand"><span class="name">Kotoba</span><span class="pair">Français ⇄ <span lang="ja">日本語</span></span></div>
+      <span class="spacer"></span>
+      <button id="favBtn" class="icon-btn" type="button" aria-pressed="false" aria-label="Afficher seulement les favoris"></button>
+      <button id="clearBtn" class="icon-btn" type="button" aria-label="Effacer l’historique"></button>
+    </div>
+    <div id="confirm" class="confirm" hidden>
+      <span>Effacer l’historique ? Les favoris restent.</span>
+      <span class="spacer"></span>
+      <button id="cancelClear" class="txt-btn" type="button">Annuler</button>
+      <button id="doClear" class="txt-btn danger" type="button">Effacer</button>
+    </div>
+    <div class="prefs" role="group" aria-label="Réglages">
+      <div class="seg" role="group" aria-label="Vitesse de traduction">
+        <button type="button" id="tierQuick" data-pref="tier" data-val="quick">Rapide</button>
+        <button type="button" id="tierCareful" data-pref="tier" data-val="careful">Soigné</button>
+      </div>
+      <div class="seg" role="group" aria-label="Registre du japonais">
+        <button type="button" id="regPolite" data-pref="polite" data-val="1">Poli</button>
+        <button type="button" id="regCasual" data-pref="polite" data-val="0">Familier</button>
+      </div>
+      <button type="button" id="romajiBtn" class="chip" aria-pressed="true">Rōmaji</button>
+    </div>
+  </header>
+
+  <main id="thread" class="thread band"></main>
+
+  <footer class="composer band">
+    <p id="banner" class="banner" hidden></p>
+    <div class="speakers" role="group" aria-label="Qui parle">
+      <button type="button" id="spkFr" class="spk fr" data-spk="fr" aria-pressed="true"><span class="mic"></span>Parler français</button>
+      <button type="button" id="spkJa" class="spk ja" data-spk="ja" aria-pressed="false" lang="ja"><span class="mic"></span>日本語で話す</button>
+    </div>
+    <form id="form" class="field" autocomplete="off">
+      <label id="cameraBtn" class="round photo" for="cameraInput" role="button" tabindex="0" aria-label="Prendre une photo"></label>
+      <input id="cameraInput" class="vh" type="file" accept="image/*" capture="environment" tabindex="-1">
+      <label id="galleryBtn" class="round photo" for="galleryInput" role="button" tabindex="0" aria-label="Choisir une photo dans la galerie"></label>
+      <input id="galleryInput" class="vh" type="file" accept="image/*" tabindex="-1">
+      <textarea id="src" rows="1" enterkeyhint="send" aria-label="Texte à traduire"></textarea>
+      <button type="submit" id="sendBtn" class="round send" aria-label="Traduire"></button>
+    </form>
+  </footer>
+</div>
+
+<div id="show" class="show" role="dialog" aria-modal="true" aria-label="Traduction en grand" hidden>
+  <button id="closeShow" class="icon-btn close" type="button" aria-label="Fermer"></button>
+  <div class="big">
+    <p id="showFrom" class="from"></p>
+    <p id="showTr" class="bigtr"></p>
+    <p id="showRo" class="bigro"></p>
+  </div>
+  <div class="showacts"><button id="showSpeak" class="txt-btn" type="button"></button></div>
+</div>
+
+<div id="lensView" class="lensview" role="dialog" aria-modal="true" aria-label="Photo traduite" hidden>
+  <div class="lv-bar">
+    <button id="lvClose" class="icon-btn" type="button" aria-label="Fermer"></button>
+    <p id="lvTitle" class="lv-title"></p>
+    <button id="lvOrig" class="chip" type="button" aria-pressed="false">Original</button>
+  </div>
+  <div id="lvScroll" class="lv-scroll"><div id="lvWrap" class="lv-wrap"></div></div>
+  <p class="lv-hint">Touche un texte pour le lire en entier.</p>
+  <div class="lv-zoom">
+    <button id="lvOut" type="button" aria-label="Dézoomer">−</button>
+    <span id="lvLevel">×1</span>
+    <button id="lvIn" type="button" aria-label="Zoomer">+</button>
+  </div>
+</div>
+
+<div id="sheet" class="sheet" role="dialog" aria-label="Texte traduit" hidden>
+  <div class="sheet-in band">
+    <p id="sheetO" class="sheet-o" lang="ja"></p>
+    <p id="sheetT" class="sheet-t" lang="fr"></p>
+    <div class="sheet-acts">
+      <button id="sheetSpeak" class="txt-btn" type="button">Écouter le japonais</button>
+      <button id="sheetClose" class="txt-btn" type="button">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" hidden></div>
+
+<script>
+(() => {
+  const KEY = 'kotoba.v1';
+  const MAX_ITEMS = 150;
+  const $ = (s) => document.querySelector(s);
+  const thread = $('#thread'), ta = $('#src'), form = $('#form'), sendBtn = $('#sendBtn');
+  const cameraBtn = $('#cameraBtn'), galleryBtn = $('#galleryBtn'), banner = $('#banner'), toastEl = $('#toast');
+  const photoPickers = [[cameraBtn, $('#cameraInput')], [galleryBtn, $('#galleryInput')]];
+  const favBtn = $('#favBtn'), clearBtn = $('#clearBtn'), confirmBar = $('#confirm'), romajiBtn = $('#romajiBtn');
+  const showEl = $('#show');
+  const lensView = $('#lensView'), lvScroll = $('#lvScroll'), lvWrap = $('#lvWrap'), lvOrig = $('#lvOrig');
+  const sheet = $('#sheet');
+
+  const SV = (d) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+  const ICONS = {
+    speak: SV('<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4z"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6M18.2 6.5a8 8 0 0 1 0 11"/>'),
+    copy: SV('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>'),
+    show: SV('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
+    star: SV('<path d="M12 3.6l2.6 5.2 5.8.9-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.9z"/>'),
+    trash: SV('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
+    camera: SV('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'),
+    gallery: SV('<rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M20.5 16l-5-5L6 19"/>'),
+    send: SV('<path d="M12 19V5M6 11l6-6 6 6"/>'),
+    stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></svg>',
+    close: SV('<path d="M6 6l12 12M18 6L6 18"/>'),
+    mic: SV('<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/>')
+  };
+  document.querySelectorAll('.spk .mic').forEach((m) => { m.outerHTML = ICONS.mic; });
+  $('#lvClose').innerHTML = ICONS.close;
+
+  favBtn.innerHTML = ICONS.star;
+  clearBtn.innerHTML = ICONS.trash;
+  cameraBtn.innerHTML = ICONS.camera;
+  galleryBtn.innerHTML = ICONS.gallery;
+  $('#closeShow').innerHTML = ICONS.close;
+
+  const EXAMPLES = [
+    { id: 'ex1', kind: 'text', src: 'fr', tgt: 'ja', text: 'Est-ce que vous avez des plats sans porc ?',
+      tr: '豚肉を使っていない料理はありますか？', ro: 'Butaniku o tsukatte inai ryōri wa arimasu ka?', note: '', status: 'done' },
+    { id: 'ex2', kind: 'text', src: 'ja', tgt: 'fr', text: 'すみません、この電車は新宿に止まりますか？',
+      tr: 'Excusez-moi, est-ce que ce train s’arrête à Shinjuku ?', ro: '', note: '', status: 'done' }
+  ];
+
+  const state = { items: [], speaker: 'fr', tier: 'quick', polite: true, romaji: true, favOnly: false };
+  const files = new Map();      // id -> image blob sent to Claude (this session only)
+  const photoUrls = new Map();  // id -> sharp object URL of that image (this session only)
+  let busy = false, ctl = null, blocked = false, imgLimits = null, limitsKnown = false;
+
+  // ---------- storage (per-device convenience) ----------
+  function load() {
+    try {
+      const d = JSON.parse(localStorage.getItem(KEY) || 'null');
+      if (!d || typeof d !== 'object') return;
+      if (Array.isArray(d.items)) {
+        state.items = d.items
+          .filter((i) => i && typeof i.id === 'string' && typeof i.tr === 'string')
+          .map((i) => i.status === 'pending' ? Object.assign({}, i, { status: i.tr ? 'done' : 'error', err: i.tr ? '' : 'Traduction interrompue.' }) : i);
+      }
+      if (d.speaker === 'fr' || d.speaker === 'ja') state.speaker = d.speaker;
+      if (d.tier === 'quick' || d.tier === 'careful') state.tier = d.tier;
+      if (typeof d.polite === 'boolean') state.polite = d.polite;
+      if (typeof d.romaji === 'boolean') state.romaji = d.romaji;
+    } catch (e) { /* storage unavailable */ }
+  }
+  // Photos are heavy: if storage is full, keep only the most recent ones, then none.
+  function save() {
+    const n = state.items.length;
+    const levels = [
+      (i) => i,
+      (i, k) => (i.photo && k < n - 6 ? Object.assign({}, i, { photo: '' }) : i),
+      (i) => (i.photo || i.thumb ? Object.assign({}, i, { photo: '', thumb: '' }) : i)
+    ];
+    for (const lv of levels) {
+      try {
+        const data = { items: state.items.map(lv), speaker: state.speaker, tier: state.tier, polite: state.polite, romaji: state.romaji };
+        localStorage.setItem(KEY, JSON.stringify(data));
+        return;
+      } catch (e) { /* try a lighter copy */ }
+    }
+  }
+  function forgetPhoto(id) {
+    files.delete(id);
+    const u = photoUrls.get(id);
+    if (u) { try { URL.revokeObjectURL(u); } catch (e) {} photoUrls.delete(id); }
+  }
+  function trimItems() {
+    while (state.items.length > MAX_ITEMS) {
+      const k = state.items.findIndex((i) => !i.fav);
+      if (k < 0) break;
+      forgetPhoto(state.items[k].id);
+      state.items.splice(k, 1);
+    }
+  }
+
+  // ---------- helpers ----------
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  const newId = () => 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  let toastTimer;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, 1900);
+  }
+  const nearBottom = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight < 140;
+  const toBottom = () => { thread.scrollTop = thread.scrollHeight; };
+
+  const JA_RE = /[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]/;
+  const FR_RE = /[àâäçéèêëîïôöùûüœæ]/i;
+  function detectSrc(text) {
+    if (JA_RE.test(text)) return 'ja';
+    if (state.speaker === 'ja' && !FR_RE.test(text)) return 'ja'; // rōmaji typed on the Japanese side
+    return 'fr';
+  }
+
+  function copyFor(code) {
+    switch (code) {
+      case 'not_granted': return 'Accès à Claude refusé. Rouvre la page et autorise-le pour traduire.';
+      case 'sampling_disabled':
+      case 'not_declared':
+      case 'capability_disabled':
+      case 'capability_removed': return 'Claude n’est pas disponible depuis cette page sur ce compte.';
+      case 'rate_limited': return 'Limite d’utilisation atteinte. Réessaie dans un moment.';
+      case 'session_expired': return 'Ta session a expiré. Reconnecte-toi à Claude puis réessaie.';
+      case 'refused': return 'Claude n’a pas traduit ce texte. Reformule-le.';
+      case 'image_rejected': return 'Photo refusée (format ou taille). Essaie une autre image.';
+      case 'images_unavailable': return 'Les photos ne sont pas disponibles ici.';
+      case 'empty_completion': return 'Pas de réponse. Raccourcis ou reformule le texte.';
+      case 'prompt_too_large': return 'Texte trop long. Coupe-le en plusieurs morceaux.';
+      default: return 'La connexion a coupé. Touche Réessayer.';
+    }
+  }
+  const BLOCKING = new Set(['not_granted', 'sampling_disabled', 'not_declared', 'capability_disabled', 'capability_removed']);
+  function block(msg) {
+    blocked = true;
+    banner.textContent = msg;
+    banner.hidden = false;
+    sendBtn.disabled = true;
+    cameraBtn.hidden = true;
+    galleryBtn.hidden = true;
+  }
+
+  // ---------- Claude ----------
+  const samplePromise = (async () => {
+    try {
+      if (!window.claude || typeof window.claude.use !== 'function') return null;
+      return (await window.claude.use('sample')) || null;
+    } catch (e) { return null; }
+  })();
+  samplePromise.then(async (s) => {
+    if (!s) { block('Ouvre Kotoba dans l’app Claude ou sur claude.ai pour traduire.'); return; }
+    try {
+      const lim = await s.limits();
+      if (lim && lim.images) {
+        imgLimits = lim.images;
+        if (!state.items.length) render();
+      }
+    } catch (e) { /* no images */ }
+    limitsKnown = true;
+  });
+
+  const LANG = { fr: 'French', ja: 'Japanese' };
+  function textPrompt(it) {
+    const toJa = it.tgt === 'ja';
+    const idx = state.items.indexOf(it);
+    const ctx = state.items.slice(0, idx < 0 ? state.items.length : idx)
+      .filter((x) => x.kind === 'text' && x.status === 'done' && x.tr)
+      .slice(-3)
+      .map((x) => '- ' + x.src.toUpperCase() + ': ' + x.text + '  →  ' + x.tgt.toUpperCase() + ': ' + x.tr)
+      .join('\n');
+    const lines = [
+      'You are an expert French ⇄ Japanese interpreter helping a French speaker in Japan talk with Japanese people.',
+      'Translate the text below from ' + LANG[it.src] + ' into ' + LANG[it.tgt] + '.',
+      '',
+      'Rules:',
+      '- Translate the meaning, not word by word: write what a native speaker would naturally say in this situation.',
+      '- Keep names, numbers, prices, times and the tone of the original.'
+    ];
+    if (toJa) lines.push(state.polite
+      ? '- Japanese register: polite です／ます form, right for strangers, shop and restaurant staff, colleagues.'
+      : '- Japanese register: casual plain form (タメ口), as between close friends.');
+    if (it.src === 'ja' && !JA_RE.test(it.text)) lines.push('- The source is Japanese written in rōmaji; read it as Japanese.');
+    lines.push('', 'Output format, exactly, with nothing else (no quotes, no labels, no Markdown):', 'The translation.');
+    if (toJa && state.romaji) lines.push('Then a line containing only @@R, then the Hepburn rōmaji reading of your translation, with macrons (ō, ū).');
+    lines.push('Then, ONLY if there is an important nuance, ambiguity or cultural pitfall the French speaker should know about, a line containing only @@N, then one short sentence in French. Otherwise write nothing more.');
+    if (ctx) lines.push('', 'Earlier in this conversation (context only, do not translate):', ctx);
+    lines.push('', 'Text to translate:', '"""', it.text, '"""');
+    return lines.join('\n');
+  }
+  // Photo translation drawn over the original text, Google Lens style: Claude streams one JSON block per line.
+  function lensPrompt() {
+    return [
+      'This photo was taken in Japan by a French speaker who cannot read Japanese.',
+      'Translate the text visible in it into French, Google Lens style: each French translation will be drawn over the original text, inside the same box.',
+      '',
+      'Reply with one JSON object per line and nothing else: no Markdown, no code fence, no comments.',
+      'Line 1: {"title": "<what the photo shows, 2 to 6 words in French>"}',
+      'Then one line per text block, in reading order (top to bottom, then left to right):',
+      '{"b": [x0, y0, x1, y1], "o": "<original text>", "t": "<French translation>"}',
+      'b is the bounding box of the ORIGINAL text as integers from 0 to 1000 measured on the whole image: x goes from the left edge (0) to the right edge (1000), y from the top edge (0) to the bottom edge (1000). Keep each box tight around its text.',
+      '',
+      'Rules:',
+      '- One block = one line of text, or one cell, label or heading that belongs together. Never merge text that is far apart.',
+      '- Translate every text that is not French (Japanese, English, Chinese…). Skip lone numbers, times and prices, and text already in French: they stay visible on the photo.',
+      '- Keep translations short so they fit in about the same space. Write station and place names in rōmaji (e.g. Kinshichō).',
+      '- At most 80 blocks. If there is more text, keep what matters most to a traveller: titles, names, headings, instructions, warnings.'
+    ].join('\n');
+  }
+  function eatLensLine(it, raw) {
+    let ln = String(raw).trim().replace(/,\s*$/, '');
+    if (!ln || ln[0] !== '{') return false;
+    let o;
+    try { o = JSON.parse(ln); } catch (e) { return false; }
+    if (!o || typeof o !== 'object') return false;
+    if (typeof o.title === 'string') { it.title = o.title.trim(); return true; }
+    if (!Array.isArray(o.b) || o.b.length !== 4 || typeof o.t !== 'string' || !o.t.trim()) return false;
+    let b = o.b.map(Number);
+    if (b.some((v) => !isFinite(v))) return false;
+    if (Math.max.apply(null, b) <= 1.001) b = b.map((v) => v * 1000);
+    b = b.map((v) => Math.min(1000, Math.max(0, v)));
+    let [x0, y0, x1, y1] = b;
+    if (x1 < x0) [x0, x1] = [x1, x0];
+    if (y1 < y0) [y0, y1] = [y1, y0];
+    if (x1 - x0 < 6) x1 = Math.min(1000, x0 + 6);
+    if (y1 - y0 < 6) y1 = Math.min(1000, y0 + 6);
+    it.blocks.push({ b: [x0, y0, x1, y1].map(Math.round), o: typeof o.o === 'string' ? o.o.trim() : '', t: o.t.trim() });
+    return true;
+  }
+  function lensText(it) {
+    return (it.title ? it.title + '\n' : '') + (it.blocks || []).map((b) => (b.o ? b.o + ' → ' : '') + b.t).join('\n');
+  }
+  function finishLens(it, pendingLine) {
+    if (pendingLine && pendingLine.trim()) eatLensLine(it, pendingLine);
+    if (it.blocks.length) it.tr = lensText(it);
+    else it.tr = (it.raw || '').trim(); // Claude ignored the format: keep its text as a plain list
+  }
+  function parseOut(t) {
+    const o = { tr: '', ro: '', note: '' };
+    const re = /@@([RN])/g;
+    let cur = 'tr', last = 0, m;
+    while ((m = re.exec(t))) { o[cur] += t.slice(last, m.index); cur = m[1] === 'R' ? 'ro' : 'note'; last = re.lastIndex; }
+    o[cur] += t.slice(last).replace(/@{1,2}$/, '');
+    o.tr = o.tr.trim(); o.ro = o.ro.trim(); o.note = o.note.trim();
+    return o;
+  }
+  function applyText(it, text) {
+    if (it.kind === 'image') { it.tr = text.trim(); return; }
+    const o = parseOut(text);
+    it.tr = o.tr; it.ro = o.ro; it.note = o.note;
+  }
+
+  async function run(it) {
+    if (busy) return;
+    busy = true;
+    setSending(true);
+    it.status = 'pending'; it.err = '';
+    if (it.kind === 'text') { it.tr = ''; it.ro = ''; it.note = ''; } else { it.tr = ''; it.blocks = []; it.title = ''; it.raw = ''; }
+    updateCard(it);
+    const s = await samplePromise;
+    if (!s) {
+      it.status = 'error'; it.err = 'Ouvre Kotoba dans l’app Claude pour traduire.';
+      busy = false; setSending(false); updateCard(it); save();
+      return;
+    }
+    ctl = new AbortController();
+    const opts = {
+      signal: ctl.signal,
+      onText: ({ text }) => { applyText(it, text); updateCard(it); }
+    };
+    let input;
+    let lensPending = '';
+    if (it.kind === 'image') {
+      const f = files.get(it.id);
+      if (!f) { it.status = 'error'; it.err = 'Photo introuvable. Reprends-la.'; busy = false; setSending(false); updateCard(it); save(); return; }
+      opts.images = [f];
+      opts.modelTier = 'default';
+      opts.effort = 'low';
+      opts.onText = ({ text, delta }) => {
+        it.raw = text;
+        const lines = (lensPending + delta).split('\n');
+        lensPending = lines.pop();
+        let added = false;
+        lines.forEach((l) => { if (eatLensLine(it, l)) added = true; });
+        if (added) { it.tr = lensText(it); lensProgress(it); }
+      };
+      input = lensPrompt();
+    } else {
+      if (state.tier === 'careful') { opts.modelTier = 'default'; opts.effort = 'low'; }
+      else opts.modelTier = 'quick';
+      input = textPrompt(it);
+    }
+    try {
+      const r = await s(input, opts);
+      if (it.kind === 'image') { it.raw = r.text; finishLens(it, lensPending); }
+      else applyText(it, r.text);
+      it.status = 'done';
+      if (r.truncated && it.kind === 'text') it.note = (it.note ? it.note + ' ' : '') + '(Réponse coupée : texte trop long.)';
+    } catch (e) {
+      const code = e && e.code;
+      if (code === 'refused') { it.tr = ''; it.ro = ''; it.note = ''; if (it.kind === 'image') { it.blocks = []; it.title = ''; } }
+      else if (it.kind === 'image') finishLens(it, lensPending);
+      else if (e && typeof e.text === 'string' && e.text) applyText(it, e.text);
+      if (code === 'cancelled') {
+        it.status = it.tr ? 'done' : 'error';
+        it.err = it.tr ? '' : 'Traduction arrêtée.';
+      } else {
+        it.status = 'error';
+        it.err = copyFor(code);
+        if (BLOCKING.has(code)) block(copyFor(code));
+      }
+    } finally {
+      busy = false; ctl = null;
+      setSending(false);
+      updateCard(it);
+      save();
+    }
+  }
+
+  // ---------- rendering ----------
+  function dots() {
+    const d = el('span', 'dots');
+    d.setAttribute('aria-label', 'Traduction en cours');
+    d.append(el('i'), el('i'), el('i'));
+    return d;
+  }
+  function actBtn(act, label, on) {
+    const b = el('button', 'act' + (on ? ' on' : ''));
+    b.type = 'button';
+    b.dataset.act = act;
+    b.innerHTML = ICONS[act === 'fav' ? 'star' : act];
+    b.append(el('span', null, label));
+    if (act === 'fav') b.setAttribute('aria-pressed', String(!!on));
+    return b;
+  }
+  function imageBody(text) {
+    const wrap = el('div', 'rows');
+    text.split('\n').map((s) => s.replace(/^\s*[-*•]\s*/, '').trim()).filter(Boolean).forEach((ln, i) => {
+      const k = ln.indexOf('→');
+      if (k > 0) {
+        const r = el('div', 'row');
+        const o = el('span', 'orig', ln.slice(0, k).trim());
+        o.lang = 'ja';
+        r.append(o, el('span', 'trl', ln.slice(k + 1).trim()));
+        wrap.append(r);
+      } else {
+        wrap.append(el('p', i === 0 ? 'lead' : 'plain', ln));
+      }
+    });
+    return wrap;
+  }
+  function buildCard(it, example) {
+    const c = el('article', 'card' + (example ? ' example' : ''));
+    c.dataset.id = it.id;
+    if (example) c.append(el('span', 'badge', 'Exemple'));
+    const head = el('div', 'src');
+    const photo = it.kind === 'image' ? photoSrc(it) : '';
+    const asLens = it.kind === 'image' && photo && ((it.blocks && it.blocks.length) || !it.tr);
+    if (it.kind === 'image') {
+      head.append(el('span', 'tag ja', 'PHOTO'));
+      if (!asLens && it.thumb) { const img = new Image(); img.src = it.thumb; img.alt = 'Photo envoyée'; img.className = 'thumb'; head.append(img); }
+      head.append(el('p', 'ptitle', it.title || (it.status === 'pending' ? 'Lecture de la photo…' : 'Texte de la photo')));
+    } else {
+      head.append(el('span', 'tag ' + it.src, it.src === 'ja' ? 'JA' : 'FR'));
+      const p = el('p', null, it.text);
+      p.lang = it.src;
+      head.append(p);
+    }
+    c.append(head);
+    const out = el('div', 'out');
+    out.lang = it.kind === 'image' ? 'fr' : it.tgt;
+    if (it.kind === 'image') {
+      if (asLens) out.append(buildLens(it, photo));
+      else if (it.tr) out.append(imageBody(it.tr));
+    } else {
+      if (it.tr) out.append(el('p', 'tr', it.tr));
+      if (it.ro) { const r = el('p', 'ro', it.ro); r.lang = 'ja-Latn'; out.append(r); }
+      if (it.note) { const n = el('p', 'note', it.note); n.lang = 'fr'; out.append(n); }
+    }
+    if (it.status === 'pending' && !it.tr && !asLens) out.append(dots());
+    if (out.childNodes.length) c.append(out);
+    if (it.status === 'error') {
+      const e = el('div', 'err');
+      e.append(el('span', null, it.err || 'La traduction a échoué.'));
+      if (it.kind === 'text' || files.has(it.id)) {
+        const b = el('button', 'txt-btn', 'Réessayer');
+        b.type = 'button';
+        b.dataset.act = 'retry';
+        e.append(b);
+      }
+      c.append(e);
+    }
+    if (!example && it.status !== 'pending' && it.tr) {
+      const a = el('div', 'acts');
+      if (it.kind === 'text' && tts) a.append(actBtn('speak', 'Écouter'));
+      a.append(actBtn('copy', 'Copier'));
+      if (it.kind === 'text') a.append(actBtn('show', 'Montrer'));
+      a.append(actBtn('fav', it.fav ? 'Gardé' : 'Garder', it.fav));
+      c.append(a);
+    }
+    return c;
+  }
+  // ---------- photo translated in place ----------
+  const photoSrc = (it) => photoUrls.get(it.id) || it.photo || '';
+  const ro = 'ResizeObserver' in window ? new ResizeObserver((entries) => entries.forEach((en) => fitStage(en.target))) : null;
+  function fitOv(ov) {
+    const w = ov.clientWidth, h = ov.clientHeight;
+    const span = ov.firstChild;
+    if (w < 2 || h < 2 || !span) return;
+    let size = Math.min(48, Math.max(6, h * 0.78));
+    ov.style.fontSize = size + 'px';
+    let n = 0;
+    // shrink rather than break words: stop when the text fits the box both ways
+    while ((span.scrollWidth > span.clientWidth + 1 || span.offsetHeight > h + 1) && size > 6 && n++ < 24) {
+      size = Math.max(6, size * 0.88);
+      ov.style.fontSize = size + 'px';
+    }
+  }
+  function fitStage(st) { st.querySelectorAll('.ov').forEach(fitOv); }
+  function ovEl(b, i) {
+    const ov = el('button', 'ov');
+    ov.type = 'button';
+    ov.dataset.act = 'block';
+    ov.dataset.bi = String(i);
+    ov.style.left = b.b[0] / 10 + '%';
+    ov.style.top = b.b[1] / 10 + '%';
+    ov.style.width = (b.b[2] - b.b[0]) / 10 + '%';
+    ov.style.height = (b.b[3] - b.b[1]) / 10 + '%';
+    ov.setAttribute('aria-label', b.t);
+    ov.append(el('span', null, b.t));
+    return ov;
+  }
+  function buildStage(it, src, fill) {
+    const st = el('div', 'stage' + (it.status === 'pending' ? ' scan' : ''));
+    const r = it.w && it.h ? it.w / it.h : 0.75;
+    st.style.aspectRatio = r.toFixed(4);
+    if (!fill) st.style.width = 'min(100%, ' + (62 * r).toFixed(2) + 'vh)';
+    const img = new Image();
+    img.src = src;
+    img.alt = it.title || 'Photo';
+    img.decoding = 'async';
+    const layer = el('div', 'layer');
+    (it.blocks || []).forEach((b, i) => layer.append(ovEl(b, i)));
+    st.append(img, layer);
+    if (ro) ro.observe(st); else requestAnimationFrame(() => fitStage(st));
+    return st;
+  }
+  function lensStatus(it) {
+    const n = (it.blocks || []).length;
+    const s = n > 1 ? 's' : '';
+    if (it.status === 'pending') return n ? n + ' zone' + s + ' traduite' + s + '…' : 'Lecture de la photo…';
+    if (!n) return it.status === 'error' ? '' : 'Aucun texte à traduire trouvé.';
+    return n + ' zone' + s + ' · touche un texte pour le lire';
+  }
+  function buildLens(it, src) {
+    const wrap = el('div', 'lens');
+    wrap.append(buildStage(it, src, false));
+    const bar = el('div', 'lensbar');
+    bar.append(el('span', 'status', lensStatus(it)));
+    if (it.status !== 'pending' && it.blocks && it.blocks.length) {
+      const o = el('button', 'chip', 'Original');
+      o.type = 'button'; o.dataset.act = 'orig'; o.setAttribute('aria-pressed', 'false');
+      const f = el('button', 'txt-btn', 'Plein écran');
+      f.type = 'button'; f.dataset.act = 'lens';
+      bar.append(o, f);
+    }
+    wrap.append(bar);
+    if (it.status !== 'pending' && it.blocks && it.blocks.length) {
+      const d = el('details', 'found');
+      d.append(el('summary', null, 'Texte détecté (' + it.blocks.length + ')'));
+      d.append(imageBody('\n' + it.blocks.map((b) => (b.o ? b.o + ' → ' : '') + b.t).join('\n')));
+      wrap.append(d);
+    }
+    return wrap;
+  }
+  // While Claude streams, add each new block to the photo without rebuilding the card.
+  function lensProgress(it) {
+    const card = thread.querySelector('.card[data-id="' + it.id + '"]');
+    const layer = card && card.querySelector('.layer');
+    if (!layer) { updateCard(it); return; }
+    for (let i = layer.children.length; i < it.blocks.length; i++) {
+      const ov = ovEl(it.blocks[i], i);
+      layer.append(ov);
+      fitOv(ov);
+    }
+    const st = card.querySelector('.lensbar .status');
+    if (st) st.textContent = lensStatus(it);
+    const t = card.querySelector('.ptitle');
+    if (t && it.title) t.textContent = it.title;
+  }
+
+  function updateCard(it) {
+    const old = thread.querySelector('.card[data-id="' + it.id + '"]');
+    if (!old) return;
+    const pin = nearBottom();
+    old.replaceWith(buildCard(it));
+    if (pin) toBottom();
+  }
+  function render() {
+    thread.textContent = '';
+    if (!state.items.length && !state.favOnly) {
+      thread.append(el('p', 'intro', 'Écris ou dicte une phrase' + (imgLimits ? ', ou prends en photo un menu ou un panneau : la traduction s’affiche directement sur l’image' : '') + '. Le japonais est reconnu tout seul.'));
+      EXAMPLES.forEach((x) => thread.append(buildCard(x, true)));
+      return;
+    }
+    const list = state.favOnly ? state.items.filter((i) => i.fav) : state.items;
+    if (!list.length) {
+      thread.append(el('p', 'intro', 'Aucun favori pour l’instant. Touche « Garder » sous une traduction pour la retrouver ici.'));
+      return;
+    }
+    list.forEach((it) => thread.append(buildCard(it)));
+    if (state.favOnly) thread.scrollTop = 0; else toBottom();
+  }
+  function setSending(on) {
+    sendBtn.innerHTML = on ? ICONS.stop : ICONS.send;
+    sendBtn.classList.toggle('stop', on);
+    sendBtn.setAttribute('aria-label', on ? 'Arrêter' : 'Traduire');
+  }
+  function syncPrefs() {
+    document.querySelectorAll('[data-pref]').forEach((b) => {
+      const v = b.dataset.pref === 'tier' ? state.tier : (state.polite ? '1' : '0');
+      b.setAttribute('aria-pressed', String(b.dataset.val === v));
+    });
+    romajiBtn.setAttribute('aria-pressed', String(state.romaji));
+    favBtn.setAttribute('aria-pressed', String(state.favOnly));
+    document.querySelectorAll('[data-spk]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.spk === state.speaker)));
+    ta.lang = state.speaker;
+    ta.placeholder = state.speaker === 'ja' ? 'ここに入力・音声入力' : 'Écris ou dicte ici';
+    sendBtn.classList.toggle('ja', state.speaker === 'ja');
+  }
+  function autosize() {
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight + 2, 150) + 'px';
+  }
+
+  // ---------- speech output ----------
+  const tts = 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
+  let voices = [];
+  function loadVoices() { try { voices = window.speechSynthesis.getVoices() || []; } catch (e) { voices = []; } }
+  if (tts) { loadVoices(); try { window.speechSynthesis.addEventListener('voiceschanged', loadVoices); } catch (e) {} }
+  function speak(text, lang) {
+    if (!tts || !text) return;
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = lang === 'ja' ? 'ja-JP' : 'fr-FR';
+      const v = voices.find((x) => (x.lang || '').toLowerCase().replace('_', '-').startsWith(lang));
+      if (v) u.voice = v;
+      u.rate = lang === 'ja' ? 0.92 : 1;
+      window.speechSynthesis.speak(u);
+    } catch (e) { toast('Lecture audio indisponible ici.'); }
+  }
+
+  // ---------- actions ----------
+  function addItem(it) {
+    const reRender = !state.items.length || state.favOnly;
+    state.items.push(it);
+    trimItems();
+    if (state.favOnly) { state.favOnly = false; syncPrefs(); }
+    if (reRender) render(); else { thread.append(buildCard(it)); toBottom(); }
+  }
+  function submit() {
+    if (busy) return;
+    const text = ta.value.trim();
+    if (!text) { ta.focus(); return; }
+    if (blocked) { toast(banner.textContent); return; }
+    const src = detectSrc(text);
+    const it = { id: newId(), kind: 'text', src, tgt: src === 'ja' ? 'fr' : 'ja', text, tr: '', ro: '', note: '', fav: false, ts: Date.now(), status: 'pending' };
+    addItem(it);
+    ta.value = '';
+    autosize();
+    run(it);
+  }
+  function copyItem(it, card) {
+    const fallback = () => {
+      const t = card.querySelector('.tr, .rows');
+      if (!t) return;
+      try {
+        const r = document.createRange(); r.selectNodeContents(t);
+        const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+        toast('Texte sélectionné : copie-le avec le menu.');
+      } catch (e) {}
+    };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(it.tr).then(() => toast('Copié'), fallback);
+      else fallback();
+    } catch (e) { fallback(); }
+  }
+  let shown = null;
+  function openShow(it) {
+    shown = it;
+    const tr = $('#showTr'), ro = $('#showRo');
+    tr.textContent = it.tr; tr.lang = it.tgt;
+    ro.textContent = it.ro || ''; ro.hidden = !it.ro;
+    $('#showFrom').textContent = it.tgt === 'ja' ? 'フランス語から翻訳しました' : 'Traduit du japonais';
+    const sp = $('#showSpeak');
+    sp.hidden = !tts;
+    sp.innerHTML = ICONS.speak;
+    sp.append(el('span', null, it.tgt === 'ja' ? '読み上げる' : 'Écouter'));
+    showEl.hidden = false;
+    $('#closeShow').focus();
+  }
+  function closeShow() { showEl.hidden = true; shown = null; }
+
+  thread.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const card = b.closest('.card');
+    const it = card && state.items.find((i) => i.id === card.dataset.id);
+    if (!it) return;
+    const act = b.dataset.act;
+    if (act === 'speak') speak(it.tr, it.tgt);
+    else if (act === 'copy') copyItem(it, card);
+    else if (act === 'show') openShow(it);
+    else if (act === 'block') openSheet(it, Number(b.dataset.bi));
+    else if (act === 'orig') {
+      const st = card.querySelector('.stage');
+      if (st) b.setAttribute('aria-pressed', String(st.classList.toggle('orig')));
+    }
+    else if (act === 'lens') openLens(it);
+    else if (act === 'fav') {
+      it.fav = !it.fav; save();
+      if (state.favOnly && !it.fav) render(); else updateCard(it);
+      toast(it.fav ? 'Gardé dans les favoris' : 'Retiré des favoris');
+    } else if (act === 'retry') {
+      if (busy) { toast('Une traduction est déjà en cours.'); return; }
+      if (blocked) { toast(banner.textContent); return; }
+      run(it);
+    }
+  });
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (busy) { if (ctl) ctl.abort(); return; }
+    submit();
+  });
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      if (!busy) submit();
+    }
+  });
+  ta.addEventListener('input', autosize);
+
+  // A web page cannot switch the keyboard into voice mode itself: these buttons pick the language,
+  // open the keyboard and point at its microphone key.
+  document.querySelectorAll('[data-spk]').forEach((b) => {
+    // Same language: keep the keyboard open. New language: let the field lose focus so the keyboard
+    // reopens and reads the field's new language hint (lang="ja" / "fr"), which some keyboards follow.
+    b.addEventListener('pointerdown', (e) => {
+      if (document.activeElement === ta && b.dataset.spk === state.speaker) e.preventDefault();
+    });
+    b.addEventListener('click', () => {
+      const changed = state.speaker !== b.dataset.spk;
+      state.speaker = b.dataset.spk; syncPrefs(); save();
+      if (changed && document.activeElement === ta) ta.blur();
+      setTimeout(() => ta.focus(), changed ? 80 : 0);
+      toast(state.speaker === 'ja' ? 'キーボードのマイクをタップして話してください' : 'Touche le micro de ton clavier et parle');
+    });
+  });
+  document.querySelectorAll('[data-pref]').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.pref === 'tier') state.tier = b.dataset.val; else state.polite = b.dataset.val === '1';
+    syncPrefs(); save();
+  }));
+  romajiBtn.addEventListener('click', () => { state.romaji = !state.romaji; syncPrefs(); save(); });
+  favBtn.addEventListener('click', () => { state.favOnly = !state.favOnly; syncPrefs(); render(); });
+  clearBtn.addEventListener('click', () => { confirmBar.hidden = !confirmBar.hidden; });
+  $('#cancelClear').addEventListener('click', () => { confirmBar.hidden = true; });
+  $('#doClear').addEventListener('click', () => {
+    if (busy && ctl) ctl.abort();
+    state.items.filter((i) => !i.fav).forEach((i) => forgetPhoto(i.id));
+    state.items = state.items.filter((i) => i.fav);
+    confirmBar.hidden = true;
+    save(); render();
+    toast('Historique effacé');
+  });
+
+  // Each label opens its own picker natively (more reliable in app web views than a scripted click):
+  // the camera input asks for the rear camera, the gallery input for an existing photo.
+  photoPickers.forEach(([btn, input]) => {
+    btn.addEventListener('click', (e) => {
+      if (busy) { e.preventDefault(); toast('Attends la fin de la traduction en cours.'); return; }
+      if (blocked) { e.preventDefault(); toast(banner.textContent); return; }
+      if (limitsKnown && !imgLimits) { e.preventDefault(); toast('Cette version de l’app Claude ne permet pas encore d’envoyer des photos à la page.'); return; }
+      input.value = '';
+    });
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); btn.click(); }
+    });
+    input.addEventListener('change', () => {
+      const f = input.files && input.files[0];
+      if (f) handlePhoto(f);
+    });
+  });
+  function canvasFor(bmp, max) {
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(bmp.width * k));
+    cv.height = Math.max(1, Math.round(bmp.height * k));
+    cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+    return cv;
+  }
+  // Re-encode every photo as a reasonably sized JPEG: phone photos can be large or in formats Claude refuses.
+  async function prepareImage(file) {
+    let bmp;
+    try { bmp = await createImageBitmap(file); } catch (e) { return { blob: file, thumb: '', photo: '', w: 0, h: 0 }; }
+    try {
+      const big = canvasFor(bmp, 1600);
+      const blob = await new Promise((res) => big.toBlob((b) => res(b), 'image/jpeg', 0.85));
+      const photo = canvasFor(bmp, 1000).toDataURL('image/jpeg', 0.72);
+      const thumb = canvasFor(bmp, 160).toDataURL('image/jpeg', 0.7);
+      return { blob: blob || file, thumb, photo, w: big.width, h: big.height };
+    } catch (e) { return { blob: file, thumb: '', photo: '', w: 0, h: 0 }; }
+    finally { try { bmp.close(); } catch (e) {} }
+  }
+  async function handlePhoto(f) {
+    if (busy) { toast('Attends la fin de la traduction en cours.'); return; }
+    const it = { id: newId(), kind: 'image', src: 'ja', tgt: 'fr', text: '', tr: '', ro: '', note: '', fav: false, ts: Date.now(), status: 'pending', thumb: '', photo: '', w: 0, h: 0, title: '', blocks: [] };
+    addItem(it);
+    const img = await prepareImage(f);
+    it.thumb = img.thumb;
+    it.photo = img.photo;
+    it.w = img.w; it.h = img.h;
+    try { photoUrls.set(it.id, URL.createObjectURL(img.blob)); } catch (e) {}
+    if (imgLimits && imgLimits.maxInputBytes && img.blob.size > imgLimits.maxInputBytes) {
+      it.status = 'error'; it.err = 'Photo trop lourde. Essaie une image plus petite.';
+      updateCard(it); save();
+      return;
+    }
+    files.set(it.id, img.blob);
+    run(it);
+  }
+
+  $('#closeShow').addEventListener('click', closeShow);
+  $('#showSpeak').addEventListener('click', () => { if (shown) speak(shown.tr, shown.tgt); });
+
+  // ---------- one block in detail ----------
+  let sheetBlock = null;
+  function openSheet(it, i) {
+    const b = it.blocks && it.blocks[i];
+    if (!b) return;
+    sheetBlock = b;
+    $('#sheetO').textContent = b.o || '';
+    $('#sheetO').hidden = !b.o;
+    $('#sheetT').textContent = b.t;
+    $('#sheetSpeak').hidden = !tts || !b.o;
+    sheet.hidden = false;
+  }
+  function closeSheet() { sheet.hidden = true; sheetBlock = null; }
+  $('#sheetClose').addEventListener('click', closeSheet);
+  $('#sheetSpeak').addEventListener('click', () => { if (sheetBlock) speak(sheetBlock.o, 'ja'); });
+
+  // ---------- full-screen photo with zoom ----------
+  const ZOOMS = [1, 1.5, 2, 3, 4];
+  let lvItem = null, lvZoom = 1;
+  function layoutLens() {
+    if (!lvItem) return;
+    const r = lvItem.w && lvItem.h ? lvItem.w / lvItem.h : 0.75;
+    const base = Math.min(lvScroll.clientWidth, lvScroll.clientHeight * r);
+    lvWrap.style.width = Math.max(1, Math.round(base * lvZoom)) + 'px';
+    $('#lvLevel').textContent = '×' + lvZoom;
+  }
+  function setZoom(z) {
+    const sc = lvScroll;
+    const cx = (sc.scrollLeft + sc.clientWidth / 2) / Math.max(1, sc.scrollWidth);
+    const cy = (sc.scrollTop + sc.clientHeight / 2) / Math.max(1, sc.scrollHeight);
+    lvZoom = z;
+    layoutLens();
+    sc.scrollLeft = cx * sc.scrollWidth - sc.clientWidth / 2;
+    sc.scrollTop = cy * sc.scrollHeight - sc.clientHeight / 2;
+  }
+  function openLens(it) {
+    const src = photoSrc(it);
+    if (!src) return;
+    lvItem = it; lvZoom = 1;
+    $('#lvTitle').textContent = it.title || 'Photo traduite';
+    lvOrig.setAttribute('aria-pressed', 'false');
+    lvWrap.textContent = '';
+    lvWrap.append(buildStage(it, src, true));
+    lensView.hidden = false;
+    layoutLens();
+    lvScroll.scrollTop = 0; lvScroll.scrollLeft = 0;
+    $('#lvClose').focus();
+  }
+  function closeLens() { closeSheet(); lensView.hidden = true; lvItem = null; lvWrap.textContent = ''; }
+  $('#lvClose').addEventListener('click', closeLens);
+  $('#lvIn').addEventListener('click', () => { const k = ZOOMS.indexOf(lvZoom); if (k < ZOOMS.length - 1) setZoom(ZOOMS[k + 1]); });
+  $('#lvOut').addEventListener('click', () => { const k = ZOOMS.indexOf(lvZoom); if (k > 0) setZoom(ZOOMS[k - 1]); });
+  lvOrig.addEventListener('click', () => {
+    const st = lvWrap.querySelector('.stage');
+    if (st) lvOrig.setAttribute('aria-pressed', String(st.classList.toggle('orig')));
+  });
+  lvWrap.addEventListener('click', (e) => {
+    const ov = e.target.closest('.ov');
+    if (ov && lvItem) openSheet(lvItem, Number(ov.dataset.bi));
+  });
+  window.addEventListener('resize', () => { if (lvItem) layoutLens(); });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!sheet.hidden) closeSheet();
+    else if (!lensView.hidden) closeLens();
+    else if (!showEl.hidden) closeShow();
+  });
+
+  // ---------- start ----------
+  load();
+  setSending(false);
+  syncPrefs();
+  render();
+})();
+</script>
