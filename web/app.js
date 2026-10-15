@@ -347,8 +347,9 @@
     if (it.spoken) lines.push('- The text comes from speech recognition: fix obvious recognition mistakes and missing punctuation silently.');
     lines.push('', 'Output format, exactly, with nothing else (no quotes, no labels, no Markdown):', toJa ? 'The Japanese to say.' : 'The French translation.');
     if (toJa && state.romaji) lines.push('Then a line containing only @@R, then the Hepburn rōmaji reading of your Japanese, with macrons (ō, ū).');
+    if (toJa) lines.push('Then a line containing only @@F, then a literal French translation of your Japanese, as close to word for word as French allows, so the user can check exactly what it says.');
     lines.push(toJa
-      ? 'Then a line containing only @@N and one short sentence in French, ONLY when your Japanese is not a plain translation of the user’s words (say in French what it asks or says) or when there is an important nuance or cultural pitfall to know. Otherwise write nothing more.'
+      ? 'Then, ONLY if there is an important nuance or cultural pitfall the user should know, a line containing only @@N, then one short sentence in French. Otherwise write nothing more.'
       : 'Then, ONLY if there is an important nuance, implied meaning or cultural point the user should know, a line containing only @@N, then one short sentence in French. Otherwise write nothing more.');
     if (ctx) lines.push('', 'Earlier in this conversation (context only, do not translate):', ctx);
     lines.push('', toJa ? 'What the user typed:' : 'What the Japanese person said:', '"""', it.text, '"""');
@@ -401,19 +402,21 @@
     if (it.blocks.length) it.tr = lensText(it);
     else it.tr = (it.raw || '').trim(); // Claude ignored the format: keep its text as a plain list
   }
+  // Sections of a text answer: translation, then @@R rōmaji, @@F literal French, @@N note.
+  const SECTION = { R: 'ro', F: 'lit', N: 'note' };
   function parseOut(t) {
-    const o = { tr: '', ro: '', note: '' };
-    const re = /@@([RN])/g;
+    const o = { tr: '', ro: '', lit: '', note: '' };
+    const re = /@@([RFN])/g;
     let cur = 'tr', last = 0, m;
-    while ((m = re.exec(t))) { o[cur] += t.slice(last, m.index); cur = m[1] === 'R' ? 'ro' : 'note'; last = re.lastIndex; }
+    while ((m = re.exec(t))) { o[cur] += t.slice(last, m.index); cur = SECTION[m[1]]; last = re.lastIndex; }
     o[cur] += t.slice(last).replace(/@{1,2}$/, '');
-    o.tr = o.tr.trim(); o.ro = o.ro.trim(); o.note = o.note.trim();
+    for (const k in o) o[k] = o[k].trim();
     return o;
   }
   function applyText(it, text) {
     if (it.kind === 'image') { it.tr = text.trim(); return; }
     const o = parseOut(text);
-    it.tr = o.tr; it.ro = o.ro; it.note = o.note;
+    it.tr = o.tr; it.ro = o.ro; it.lit = o.lit; it.note = o.note;
   }
   function blobToBase64(blob) {
     return new Promise((resolve, reject) => {
@@ -429,7 +432,7 @@
     busy = true;
     setSending(true);
     it.status = 'pending'; it.err = '';
-    if (it.kind === 'text') { it.tr = ''; it.ro = ''; it.note = ''; } else { it.tr = ''; it.blocks = []; it.title = ''; it.raw = ''; }
+    if (it.kind === 'text') { it.tr = ''; it.ro = ''; it.lit = ''; it.note = ''; } else { it.tr = ''; it.blocks = []; it.title = ''; it.raw = ''; }
     updateCard(it);
     ctl = new AbortController();
     const req = { signal: ctl.signal };
@@ -469,7 +472,7 @@
       if (r.truncated && it.kind === 'text') it.note = (it.note ? it.note + ' ' : '') + '(Réponse coupée : texte trop long.)';
     } catch (e) {
       const code = (e && e.api && e.code) || 'failed';
-      if (code === 'refused') { it.tr = ''; it.ro = ''; it.note = ''; if (it.kind === 'image') { it.blocks = []; it.title = ''; } }
+      if (code === 'refused') { it.tr = ''; it.ro = ''; it.lit = ''; it.note = ''; if (it.kind === 'image') { it.blocks = []; it.title = ''; } }
       else if (it.kind === 'image') finishLens(it, lensPending);
       else if (e && typeof e.text === 'string' && e.text) applyText(it, e.text);
       if (code === 'cancelled') {
@@ -525,6 +528,30 @@
     });
     return wrap;
   }
+  // Under a Japanese translation: the rōmaji (JA) or what the Japanese says word for word (FR).
+  function readingLine(it) {
+    const fr = it.view === 'fr' && !!it.lit;
+    const p = el('p', 'ro');
+    const t = el('span', null, fr ? it.lit : it.ro);
+    t.lang = fr ? 'fr' : 'ja-Latn';
+    p.append(t);
+    if (it.lit && it.status !== 'pending') {
+      const g = el('span', 'rt');
+      g.setAttribute('role', 'group');
+      g.setAttribute('aria-label', 'Lecture ou sens mot à mot');
+      [['ja', 'JA', 'Lecture en rōmaji'], ['fr', 'FR', 'Ce que dit le japonais, mot à mot']].forEach(([v, label, name]) => {
+        const b = el('button', null, label);
+        b.type = 'button';
+        b.dataset.act = 'view';
+        b.dataset.view = v;
+        b.setAttribute('aria-label', name);
+        b.setAttribute('aria-pressed', String((fr ? 'fr' : 'ja') === v));
+        g.append(b);
+      });
+      p.append(g);
+    }
+    return p;
+  }
   function buildCard(it, example) {
     const c = el('article', 'card' + (example ? ' example' : ''));
     c.dataset.id = it.id;
@@ -550,7 +577,7 @@
       else if (it.tr) out.append(imageBody(it.tr));
     } else {
       if (it.tr) out.append(el('p', 'tr', it.tr));
-      if (it.ro) { const r = el('p', 'ro', it.ro); r.lang = 'ja-Latn'; out.append(r); }
+      if (it.ro || it.lit) out.append(readingLine(it));
       if (it.note) { const n = el('p', 'note', it.note); n.lang = 'fr'; out.append(n); }
     }
     if (it.status === 'pending' && !it.tr && !asLens) out.append(dots());
@@ -969,6 +996,7 @@
       if (st) b.setAttribute('aria-pressed', String(st.classList.toggle('orig')));
     }
     else if (act === 'lens') openLens(it);
+    else if (act === 'view') { it.view = b.dataset.view; save(); updateCard(it); }
     else if (act === 'fav') {
       it.fav = !it.fav; save();
       if (state.favOnly && !it.fav) render(); else updateCard(it);

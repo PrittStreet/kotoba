@@ -56,12 +56,13 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
 Comportement voulu par Ronan (définitif) : côté français, Claude est son interprète, pas un
 traducteur mot à mot. Quand Ronan décrit ce qu'il veut (« demande au pharmacien s'il a
 l'équivalent du Microlax »), Claude écrit directement la phrase à dire en japonais, à la première
-personne, avec les mots que les Japonais connaissent, et résume en français dans la note `@@N` ce
-que dit la phrase quand ce n'est pas une traduction directe. Côté japonais : traduction du sens,
+personne, avec les mots que les Japonais connaissent. Pour vérifier, Claude renvoie aussi la
+traduction mot à mot en français de son japonais (section `@@F`), affichée par les petits boutons
+JA / FR au bout de la ligne rōmaji. La note `@@N` reste réservée aux nuances. Côté japonais : traduction du sens,
 avec le contexte de la conversation. Même modèle, même vitesse : tout est dans `textPrompt`.
 
 Ce qui vient de l'artifact et doit rester : détection FR/JA, rōmaji et note de nuance
-(format `@@R` / `@@N`), Rapide / Soigné, Poli / Familier, Écouter, Copier, Montrer, Favoris,
+(format `@@R` / `@@F` / `@@N`), Rapide / Soigné, Poli / Familier, Écouter, Copier, Montrer, Favoris,
 historique, photos « façon Google Lens » (une ligne JSON par bloc, `{"b":[x0,y0,x1,y1],"o":…,"t":…}`,
 coordonnées 0–1000), design (sceau 言葉, indigo 藍 + vermillon 朱, Zen Kaku Gothic New, clair/sombre).
 
