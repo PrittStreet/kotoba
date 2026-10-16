@@ -49,11 +49,12 @@ import java.util.Locale;
  * Kotoba: the web app from /web shown full screen, plus what a web page can't do well on Android:
  * a microphone per language, voices, the camera and the clipboard (see Bridge).
  */
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements LiveService.Listener {
     private static final String HOST = "appassets.androidplatform.net";
     private static final String START_URL = "https://" + HOST + "/assets/index.html";
     private static final int REQ_FILES = 1;
     private static final int REQ_MIC = 2;
+    private static final int REQ_LIVE = 3;
 
     private KotobaWebView web;
     private WebViewAssetLoader assets;
@@ -68,11 +69,13 @@ public class MainActivity extends Activity {
     private File pendingPhoto;
     private Uri pendingPhotoUri;
     private String pendingLang;
+    private String[] pendingLive; // key, workspace, male: Live waiting for the microphone permission
     private int pendingSilenceMs;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        LiveService.listener = this;
         if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) WebView.setWebContentsDebuggingEnabled(true);
 
         // Edge to edge: the page draws under the status and navigation bars and keeps clear of them itself
@@ -183,8 +186,48 @@ public class MainActivity extends Activity {
         speech.start(lang, silenceMs);
     }
 
+    // ---------- Live mode (LiveService) ----------
+
+    void startLive(String key, String workspace, boolean male) {
+        speech.cancel();
+        voice.stop();
+        boolean mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+        // the notification shows Live is on (and holds its Stop key): asked once, not required
+        boolean notify = Build.VERSION.SDK_INT < 33
+                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+        if (mic && notify) {
+            LiveService.start(this, key, workspace, male);
+            return;
+        }
+        pendingLive = new String[]{key, workspace, male ? "1" : ""};
+        requestPermissions(Build.VERSION.SDK_INT >= 33
+                ? new String[]{Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS}
+                : new String[]{Manifest.permission.RECORD_AUDIO}, REQ_LIVE);
+    }
+
+    @Override
+    public void onLive(JSONObject ev) {
+        web.evaluateJavascript("window.kotobaLive && kotobaLive(" + ev + ")", null);
+    }
+
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode == REQ_LIVE) {
+            String[] l = pendingLive;
+            pendingLive = null;
+            if (l == null) return;
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                LiveService.start(this, l[0], l[1], !l[2].isEmpty());
+            } else {
+                try {
+                    onLive(new JSONObject().put("type", "state").put("state", "error")
+                            .put("text", "Autorise le micro pour Kotoba (Réglages Android > Applis > Kotoba > Autorisations)."));
+                } catch (JSONException ignored) {
+                    // valid strings
+                }
+            }
+            return;
+        }
         if (requestCode != REQ_MIC) return;
         String lang = pendingLang;
         pendingLang = null;
@@ -375,6 +418,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (LiveService.listener == this) LiveService.listener = null; // Live itself goes on
         speech.cancel();
         voice.shutdown();
         ((ViewGroup) web.getParent()).removeView(web);

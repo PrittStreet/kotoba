@@ -20,6 +20,7 @@
       <span class="seal" aria-hidden="true"><span><b>言</b><b>葉</b></span></span>
       <div class="brand"><span class="name">Kotoba</span><span class="pair">Français ⇄ <span lang="ja">日本語</span></span></div>
       <span class="spacer"></span>
+      <button id="liveBtn" class="icon-btn" type="button" aria-label="Live : traduire le japonais entendu autour de moi" hidden></button>
       <button id="favBtn" class="icon-btn" type="button" aria-pressed="false" aria-label="Afficher seulement les favoris"></button>
       <button id="clearBtn" class="icon-btn" type="button" aria-label="Effacer la conversation"></button>
       <button id="setBtn" class="icon-btn" type="button" aria-label="Réglages"></button>
@@ -79,6 +80,18 @@
     <p id="showRo" class="bigro"></p>
   </div>
   <div class="showacts"><button id="showSpeak" class="txt-btn" type="button"></button></div>
+</div>
+
+<div id="live" class="panel live" role="dialog" aria-modal="true" aria-labelledby="liveTitle" hidden>
+  <div class="panel-bar band">
+    <div class="live-head"><h2 id="liveTitle">Live</h2><p id="liveState" class="live-state" role="status"></p></div>
+    <button id="liveClose" class="icon-btn" type="button" aria-label="Arrêter et fermer"></button>
+  </div>
+  <div id="liveList" class="live-list band"></div>
+  <div class="live-foot band">
+    <p id="livePartial" class="live-partial" lang="ja"></p>
+    <button id="liveToggle" class="live-toggle" type="button"></button>
+  </div>
 </div>
 
 <div id="settings" class="panel" role="dialog" aria-modal="true" aria-labelledby="setTitle" hidden>

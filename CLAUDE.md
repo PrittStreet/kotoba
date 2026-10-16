@@ -77,6 +77,18 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     Android ne donne pas le genre d'une voix : il est deviné par son nom (codes des voix Google,
     `jac`/`jad`/`frb`/`frd` = homme). Sans voix d'homme installée, la voix par défaut est rendue
     plus grave (`setPitch`). Hors Android : Web Speech, même principe.
+  - Mode Live (bouton casque en haut, écran à part, voulu par Ronan sans interférence avec le
+    reste) : écoute en continu le japonais autour (annonces, quelqu'un qui lui parle) et le traduit
+    phrase par phrase en français, dit dans les écouteurs et affiché. Pas de conversation, rien dans
+    le fil ni dans le contexte. Tout tourne côté Android (`LiveService` : service au premier plan
+    « microphone », notification avec Arrêter, verrou de veille ≤ 4 h) pour marcher téléphone en
+    poche, écran éteint : `SpeechRecognizer` ja-JP en sessions enchaînées, Claude Haiku appelé en
+    Java (une phrase à la fois, 3 phrases de contexte, « - » = bruit ignoré), `TextToSpeech` fr en
+    file. Micro du téléphone, pas celui des écouteurs (mode appel, filtre les voix autour). Voix
+    seulement si des écouteurs sont branchés, sinon le micro l'entendrait. Pont : `liveStart(key,
+    workspace, male)`, `liveStop`, `liveState`, `liveUsage` ; retours `kotobaLive({type: state |
+    partial | phrase})`. Fermer l'écran Live arrête l'écoute ; rouvrir l'app pendant une session
+    affiche l'écran Live. Xiaomi (HyperOS) : régler la batterie de Kotoba sur « Aucune restriction ».
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
   - Pas de `backdrop-filter` sur les traductions des photos : sur un Samsung, elles se

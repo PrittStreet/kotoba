@@ -41,7 +41,8 @@
     close: SV('<path d="M6 6l12 12M18 6L6 18"/>'),
     mic: SV('<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/>'),
     kbd: SV('<rect x="2.5" y="6" width="19" height="12" rx="2.2"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M8 14.2h8"/>'),
-    turn: SV('<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4.5H15"/>')
+    turn: SV('<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4.5H15"/>'),
+    live: SV('<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4.5" height="6.5" rx="1.6"/><rect x="16.5" y="14" width="4.5" height="6.5" rx="1.6"/>')
   };
   kbdBtns.forEach((b) => { b.innerHTML = ICONS.kbd; });
   micBtns.forEach((b) => b.insertAdjacentHTML('beforeend', '<svg class="ring" aria-hidden="true"><rect pathLength="100"/></svg>'));
@@ -1796,6 +1797,7 @@
     else if (!lensView.hidden) closeLens();
     else if (!showEl.hidden) closeShow();
     else if (!settingsEl.hidden) closeSettings();
+    else if (!liveEl.hidden) closeLive();
     else if (listening) cancelListening(); // during « Un instant… » nothing: the sentence still arrives
     else if (!confirmBar.hidden) confirmBar.hidden = true;
     else if (unfavAsk) { const a = state.items.find((i) => i.id === unfavAsk); unfavAsk = ''; if (a) updateCard(a); }
@@ -1808,6 +1810,99 @@
   // Android stops the microphone in the background: nothing more will arrive
   document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelListening(true); stopSpeaking(); } });
 
+  // ---------- Live: Japanese heard around (someone talking, announcements), translated phrase by phrase ----------
+  // The Android app does the work (LiveService), also with the screen off; this screen only shows it.
+  // Kept apart from the conversation: nothing here touches the cards, the dictation or the context.
+  const liveEl = $('#live'), liveList = $('#liveList'), liveToggle = $('#liveToggle');
+  const liveAvailable = !!(NATIVE && NATIVE.liveStart && stt);
+  let liveRunning = false, liveError = false;
+  $('#liveBtn').innerHTML = ICONS.live;
+  $('#liveClose').innerHTML = ICONS.close;
+  $('#liveBtn').hidden = !liveAvailable;
+  function livePhrase(p) {
+    if (!p || p.status === 'skip') return null; // noise: nothing to show
+    const d = el('div', 'lp ' + p.status);
+    d.dataset.id = String(p.id);
+    d.append(el('p', 'fr', p.status === 'pending' ? 'Traduction…' : p.status === 'error' ? (p.err || 'Traduction impossible.') : p.fr));
+    const ja = el('p', 'ja', p.ja);
+    ja.lang = 'ja';
+    d.append(ja);
+    return d;
+  }
+  function liveStateText(st, headphones, text) {
+    if (st === 'error') return text;
+    if (!liveRunning) return 'Arrêté.';
+    return 'J’écoute le japonais autour de toi. ' + (headphones ? 'Traduction dite dans tes écouteurs.' : 'Sans écouteurs : à l’écran seulement.');
+  }
+  function liveSync() {
+    let st = null;
+    try { st = JSON.parse(NATIVE.liveState()); } catch (e) { return; }
+    liveRunning = !!st.running;
+    liveList.textContent = '';
+    (st.phrases || []).forEach((p) => { const d = livePhrase(p); if (d) liveList.append(d); });
+    if (!liveList.childNodes.length) liveList.append(el('p', 'intro', 'Les annonces et ce qu’on te dit en japonais s’affichent ici, traduits phrase par phrase. Tu peux mettre le téléphone dans ta poche : ça continue.'));
+    $('#livePartial').textContent = st.partial || '';
+    $('#liveState').textContent = liveStateText('', st.headphones);
+    liveSyncToggle();
+    liveList.scrollTop = liveList.scrollHeight;
+    liveCount();
+  }
+  function liveSyncToggle() {
+    liveToggle.textContent = liveRunning ? 'Arrêter' : 'Démarrer';
+    liveToggle.classList.toggle('stop', liveRunning);
+  }
+  // Live's tokens go into the same cost estimate as the rest.
+  function liveCount() {
+    try { JSON.parse(NATIVE.liveUsage()).forEach((u) => addUsage(MODEL_QUICK, u[0], u[1])); } catch (e) {}
+  }
+  function liveStart() {
+    if (!getKey()) { openSettings('Ajoute d’abord ta clé API Claude.'); return; }
+    liveError = false;
+    $('#liveState').textContent = 'Démarrage…';
+    try { NATIVE.liveStart(getKey(), getWorkspace(), state.voice === 'male'); } catch (e) {}
+  }
+  function openLive() {
+    cancelListening(true); // the microphone goes to Live
+    stopSpeaking();
+    liveEl.hidden = false;
+    liveSync();
+    if (!liveRunning) liveStart();
+  }
+  // Closing the screen stops listening: no microphone left on without the screen saying so.
+  function closeLive() {
+    if (liveRunning) { try { NATIVE.liveStop(); } catch (e) {} }
+    liveEl.hidden = true;
+    liveCount();
+  }
+  window.kotobaLive = (ev) => {
+    if (!ev) return;
+    if (ev.type === 'state') {
+      // an error stays on screen when Live stops because of it
+      if (ev.state === 'listening') { liveRunning = true; liveError = false; }
+      if (ev.state === 'stopped') { liveRunning = false; $('#livePartial').textContent = ''; }
+      if (ev.state === 'error') liveError = true;
+      if (!(ev.state === 'stopped' && liveError)) $('#liveState').textContent = liveStateText(ev.state, ev.headphones, ev.text);
+      liveSyncToggle();
+    } else if (ev.type === 'partial') {
+      $('#livePartial').textContent = ev.text || '';
+    } else if (ev.type === 'phrase' && ev.phrase) {
+      const old = liveList.querySelector('.lp[data-id="' + ev.phrase.id + '"]');
+      const d = livePhrase(ev.phrase);
+      const pin = liveList.scrollHeight - liveList.scrollTop - liveList.clientHeight < 120;
+      const intro = liveList.querySelector('.intro');
+      if (intro && d) intro.remove();
+      if (old) { if (d) old.replaceWith(d); else old.remove(); } else if (d) liveList.append(d);
+      if (ev.phrase.status === 'pending') $('#livePartial').textContent = '';
+      if (pin) liveList.scrollTop = liveList.scrollHeight;
+      if (ev.phrase.status === 'done') liveCount();
+    }
+  };
+  $('#liveBtn').addEventListener('click', openLive);
+  $('#liveClose').addEventListener('click', closeLive);
+  liveToggle.addEventListener('click', () => { if (liveRunning) { try { NATIVE.liveStop(); } catch (e) {} } else liveStart(); });
+  // Back from the pocket (or from the notification): the screen shows what was heard meanwhile.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !liveEl.hidden) liveSync(); });
+
   // ---------- start ----------
   load();
   try { if (NATIVE) NATIVE.voice(state.voice); } catch (e) {}
@@ -1815,4 +1910,5 @@
   syncPrefs();
   syncBanner();
   render();
+  if (liveAvailable) { try { if (JSON.parse(NATIVE.liveState()).running) { liveEl.hidden = false; liveSync(); } } catch (e) {} }
 })();

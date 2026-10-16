@@ -110,6 +110,30 @@ final class Bridge {
         return c.toString();
     }
 
+    // ---------- Live mode: Japanese heard around, translated phrase by phrase (LiveService) ----------
+
+    @JavascriptInterface
+    public void liveStart(String key, String workspace, boolean male) {
+        app.runOnUiThread(() -> app.startLive(key, workspace, male));
+    }
+
+    @JavascriptInterface
+    public void liveStop() {
+        app.runOnUiThread(() -> LiveService.stop(app));
+    }
+
+    /** {running, headphones, partial, phrases}: to draw the Live screen when it opens. */
+    @JavascriptInterface
+    public String liveState() {
+        return LiveService.state();
+    }
+
+    /** Tokens used by Live since the last call, for the cost estimate: [[input, output], …]. */
+    @JavascriptInterface
+    public String liveUsage() {
+        return LiveService.takeUsage();
+    }
+
     @JavascriptInterface
     public String version() {
         try {
