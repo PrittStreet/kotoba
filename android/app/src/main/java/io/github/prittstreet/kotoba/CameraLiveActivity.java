@@ -5,11 +5,10 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.Point;
 import android.graphics.Rect;
-import android.graphics.RectF;
 import android.graphics.drawable.GradientDrawable;
-import android.media.Image;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -29,10 +28,9 @@ import androidx.activity.EdgeToEdge;
 import androidx.activity.SystemBarStyle;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.annotation.OptIn;
 import androidx.camera.core.CameraInfo;
 import androidx.camera.core.CameraSelector;
-import androidx.camera.core.ExperimentalGetImage;
+import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.resolutionselector.AspectRatioStrategy;
 import androidx.camera.core.resolutionselector.ResolutionSelector;
@@ -90,6 +88,8 @@ public class CameraLiveActivity extends ComponentActivity {
     private static final int CACHE_SIZE = 500;
     /** A line Claude skipped this many times is left untranslated. */
     private static final int MAX_TRIES = 2;
+    /** "Photo": the longest side of the picture handed to the photo translation (as the page's own photos). */
+    private static final int PHOTO_MAX = 2048;
 
     /** Translations kept between visits, by text read: "-" for noise. Main thread. */
     private static final Map<String, String> cache = new LinkedHashMap<String, String>(64, 0.75f, true) {
@@ -247,6 +247,8 @@ public class CameraLiveActivity extends ComponentActivity {
                 .setResolutionStrategy(new ResolutionStrategy(new Size(1920, 1080),
                         ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
                 .build());
+        // ready for a Bitmap: CameraX converts the colours itself, faster
+        controller.setImageAnalysisOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888);
         controller.setImageAnalysisAnalyzer(analysis, this::analyze);
         controller.bindToLifecycle(this);
         preview.setController(controller);
@@ -263,53 +265,59 @@ public class CameraLiveActivity extends ComponentActivity {
     }
 
     /**
-     * One picture from the camera, read by ML Kit. Its positions are on the picture turned upright;
-     * the part shown on screen is the picture's crop rectangle, scaled to fill the screen. The next
-     * picture comes once this one is read.
+     * One picture from the camera, read by ML Kit. ML Kit is given the part shown on screen, already
+     * turned upright: told to turn it itself, it gave positions on the picture lying on its side (the
+     * labels came out a quarter turn off on the Xiaomi). The next picture comes once this one is read.
      */
-    @OptIn(markerClass = ExperimentalGetImage.class)
     private void analyze(ImageProxy proxy) {
-        Image image = proxy.getImage();
-        if (image == null || destroyed || taking) {
+        if (destroyed || taking) {
             proxy.close();
             return;
         }
-        int rotation = proxy.getImageInfo().getRotationDegrees();
-        RectF shown = upright(proxy.getCropRect(), rotation, proxy.getWidth(), proxy.getHeight());
+        Bitmap shown;
         try {
-            recognizer.process(InputImage.fromMediaImage(image, rotation))
+            shown = shown(proxy);
+        } catch (RuntimeException e) {
+            proxy.close();
+            return;
+        }
+        int w = shown.getWidth(), h = shown.getHeight();
+        try {
+            recognizer.process(InputImage.fromBitmap(shown, 0))
                     .addOnCompleteListener(ContextCompat.getMainExecutor(this), task -> {
                         proxy.close();
-                        if (task.isSuccessful()) onText(task.getResult(), shown);
+                        shown.recycle();
+                        if (task.isSuccessful()) onText(task.getResult(), w, h);
                     });
         } catch (RuntimeException e) {
             proxy.close(); // recognizer closed meanwhile
+            shown.recycle();
         }
     }
 
-    /** A rectangle of the picture as it comes from the camera, on the picture turned upright (clockwise). */
-    static RectF upright(Rect r, int rotation, int w, int h) {
-        switch (rotation) {
-            case 90:
-                return new RectF(h - r.bottom, r.left, h - r.top, r.right);
-            case 180:
-                return new RectF(w - r.right, h - r.bottom, w - r.left, h - r.top);
-            case 270:
-                return new RectF(r.top, w - r.right, r.bottom, w - r.left);
-            default:
-                return new RectF(r);
-        }
+    /** The camera's picture as on screen: cropped to what the preview shows, turned upright. */
+    private static Bitmap shown(ImageProxy proxy) {
+        Bitmap frame = proxy.toBitmap();
+        Rect crop = proxy.getCropRect();
+        // the crop may already be applied, or not
+        Rect r = frame.getWidth() == proxy.getWidth() && frame.getHeight() == proxy.getHeight()
+                ? crop : new Rect(0, 0, frame.getWidth(), frame.getHeight());
+        Matrix turn = new Matrix();
+        turn.postRotate(proxy.getImageInfo().getRotationDegrees());
+        Bitmap up = Bitmap.createBitmap(frame, r.left, r.top, r.width(), r.height(), turn, false);
+        if (up != frame) frame.recycle();
+        return up;
     }
 
     /** A picture read: the lines in Japanese move their labels, the new ones are translated. */
-    private void onText(Text text, RectF shown) {
+    private void onText(Text text, int w, int h) {
         if (destroyed || taking || text == null) return;
         float vw = labels.getWidth(), vh = labels.getHeight();
-        if (vw <= 0 || vh <= 0 || shown.width() <= 0 || shown.height() <= 0) return;
-        // the screen shows the middle of the picture, filling it (like the preview)
-        float s = Math.max(vw / shown.width(), vh / shown.height());
-        float dx = (vw - shown.width() * s) / 2 - shown.left * s;
-        float dy = (vh - shown.height() * s) / 2 - shown.top * s;
+        if (vw <= 0 || vh <= 0 || w <= 0 || h <= 0) return;
+        // the picture fills the screen (same shape: only scaled)
+        float s = Math.max(vw / w, vh / h);
+        float dx = (vw - w * s) / 2;
+        float dy = (vh - h * s) / 2;
         List<LabelsView.Seen> seen = new ArrayList<>();
         for (Text.TextBlock b : text.getTextBlocks()) {
             for (Text.Line line : b.getLines()) {
@@ -344,18 +352,21 @@ public class CameraLiveActivity extends ComponentActivity {
     /** What is on screen goes to the app's photo translation, the same as a photo taken. */
     private void takePhoto() {
         if (taking || controller == null) return;
-        Bitmap picture = preview.getBitmap();
-        if (picture == null) return; // nothing on screen yet
+        Bitmap shot = preview.getBitmap();
+        if (shot == null) return; // nothing on screen yet
         taking = true;
         show("Photo…");
         File dir = new File(getCacheDir(), "photos");
         String name = "live-" + System.currentTimeMillis() + ".jpg";
         net.execute(() -> {
+            // what Claude reads well, no more: a lighter file, faster all the way
+            float k = Math.min(1f, PHOTO_MAX / (float) Math.max(shot.getWidth(), shot.getHeight()));
+            Bitmap picture = k < 1 ? Bitmap.createScaledBitmap(shot, Math.round(shot.getWidth() * k), Math.round(shot.getHeight() * k), true) : shot;
             boolean ok;
             //noinspection ResultOfMethodCallIgnored
             dir.mkdirs();
             try (FileOutputStream out = new FileOutputStream(new File(dir, name))) {
-                ok = picture.compress(Bitmap.CompressFormat.JPEG, 92, out);
+                ok = picture.compress(Bitmap.CompressFormat.JPEG, 88, out);
             } catch (IOException e) {
                 ok = false;
             }

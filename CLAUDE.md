@@ -100,16 +100,17 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
   - Caméra live (bouton viseur en haut, `CameraLiveActivity`, écran natif à part) : le japonais filmé
     est traduit sur place, étiquettes qui suivent le texte quand le téléphone bouge (« façon Google
     Lens », mais traduit par Claude : voulu par Ronan). Lecture du texte sur le téléphone, hors ligne,
-    plusieurs fois par seconde (ML Kit japonais intégré à l'APK, `InputImage.fromMediaImage` avec la
-    rotation : positions sur l'image redressée, puis rectangle de recadrage → écran comme le
-    `FILL_CENTER` de l'aperçu). Pas de `MlKitAnalyzer` : ses coordonnées « view referenced » sortaient
-    tournées d'un quart de tour sur le Xiaomi. Chaque ligne est suivie d'une image à l'autre
+    plusieurs fois par seconde (ML Kit japonais intégré à l'APK). ML Kit reçoit une image déjà
+    recadrée sur ce que montre l'aperçu et redressée (`toBitmap` RGBA, `createBitmap` + rotation,
+    `InputImage.fromBitmap(…, 0)`), puis simple mise à l'échelle vers l'écran. Ne pas lui laisser la
+    rotation (`fromMediaImage(image, rotation)` ou `MlKitAnalyzer`) : sur le Xiaomi, ses positions
+    restaient celles de l'image couchée, étiquettes tournées d'un quart de tour. Chaque ligne est suivie d'une image à l'autre
     (`LabelsView` : même texte, ou lecture voisine et ressemblante) et son étiquette glisse vers la
     nouvelle position. Une ligne lue sur 2 images est traduite une seule fois par Claude Haiku
     (`Claude.java`, lignes numérotées, une requête à la fois, réponse en objet JSON `{"1": …}`,
     « - » = bruit ; une ligne oubliée 2 fois reste sans traduction), puis gardée en mémoire (500
     textes, aussi pour une lecture qui diffère d'une lettre). « Photo » enregistre ce qui est à
-    l'écran (`cache/photos`), ferme la caméra et le passe à la traduction photo habituelle
+    l'écran (2048 px max, `cache/photos`), ferme la caméra et le passe à la traduction photo habituelle
     (`kotobaPhoto('/photos/…')`, servi par `WebViewAssetLoader` ; CSP `connect-src 'self'`).
     « Lampe » si le téléphone en a une. Permission CAMERA demandée par l'écran lui-même. Ses tokens
     comptent dans l'estimation du coût au retour dans l'app (`liveUsage`).
