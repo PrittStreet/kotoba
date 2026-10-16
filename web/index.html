@@ -84,13 +84,18 @@
 
 <div id="live" class="panel live" role="dialog" aria-modal="true" aria-labelledby="liveTitle" hidden>
   <div class="panel-bar band">
-    <div class="live-head"><h2 id="liveTitle">Live</h2><p id="liveState" class="live-state" role="status"></p></div>
+    <div class="live-head"><h2 id="liveTitle">Live</h2><p id="liveState" class="live-state" role="status"></p><div class="meter" aria-hidden="true"><i id="liveLevel"></i></div></div>
     <button id="liveClose" class="icon-btn" type="button" aria-label="Arrêter et fermer"></button>
   </div>
   <div id="liveList" class="live-list band"></div>
   <div class="live-foot band">
     <p id="livePartial" class="live-partial" lang="ja"></p>
     <button id="liveToggle" class="live-toggle" type="button"></button>
+    <details id="liveJournal" class="found">
+      <summary>Journal du Live (en cas de souci)</summary>
+      <pre id="liveLog" class="log"></pre>
+      <div class="set-acts"><button id="liveCopyLog" class="txt-btn" type="button">Copier le journal</button></div>
+    </details>
   </div>
 </div>
 

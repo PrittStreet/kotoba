@@ -89,6 +89,11 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     workspace, male)`, `liveStop`, `liveState`, `liveUsage` ; retours `kotobaLive({type: state |
     partial | phrase})`. Fermer l'écran Live arrête l'écoute ; rouvrir l'app pendant une session
     affiche l'écran Live. Xiaomi (HyperOS) : régler la batterie de Kotoba sur « Aucune restriction ».
+    Sensibilité : sur Android 13+, Kotoba enregistre lui-même le micro du téléphone (`AudioRecord`,
+    jamais celui des écouteurs), relève les voix faibles ou lointaines (gain auto ≤ ×8, limiteur) et
+    passe ce son au recognizer (`EXTRA_AUDIO_SOURCE`, un tuyau par phrase). Si le recognizer ne le
+    lit pas (1,5 s) ou échoue tout de suite 3 fois, retour au micro standard. Barre de niveau et
+    journal (Copier) dans l'écran Live pour le dépannage.
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
   - Pas de `backdrop-filter` sur les traductions des photos : sur un Samsung, elles se

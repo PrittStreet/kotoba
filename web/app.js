@@ -1842,6 +1842,7 @@
     (st.phrases || []).forEach((p) => { const d = livePhrase(p); if (d) liveList.append(d); });
     if (!liveList.childNodes.length) liveList.append(el('p', 'intro', 'Les annonces et ce qu’on te dit en japonais s’affichent ici, traduits phrase par phrase. Tu peux mettre le téléphone dans ta poche : ça continue.'));
     $('#livePartial').textContent = st.partial || '';
+    $('#liveLog').textContent = (st.journal || []).join('\n') || 'Rien pour l’instant.';
     $('#liveState').textContent = liveStateText('', st.headphones);
     liveSyncToggle();
     liveList.scrollTop = liveList.scrollHeight;
@@ -1879,10 +1880,12 @@
     if (ev.type === 'state') {
       // an error stays on screen when Live stops because of it
       if (ev.state === 'listening') { liveRunning = true; liveError = false; }
-      if (ev.state === 'stopped') { liveRunning = false; $('#livePartial').textContent = ''; }
+      if (ev.state === 'stopped') { liveRunning = false; $('#livePartial').textContent = ''; $('#liveLevel').style.width = '0'; }
       if (ev.state === 'error') liveError = true;
       if (!(ev.state === 'stopped' && liveError)) $('#liveState').textContent = liveStateText(ev.state, ev.headphones, ev.text);
       liveSyncToggle();
+    } else if (ev.type === 'level') {
+      $('#liveLevel').style.width = Math.round((Number(ev.level) || 0) * 100) + '%';
     } else if (ev.type === 'partial') {
       $('#livePartial').textContent = ev.text || '';
     } else if (ev.type === 'phrase' && ev.phrase) {
@@ -1898,6 +1901,11 @@
     }
   };
   $('#liveBtn').addEventListener('click', openLive);
+  $('#liveJournal').addEventListener('toggle', () => { if ($('#liveJournal').open) liveSync(); });
+  $('#liveCopyLog').addEventListener('click', () => {
+    const text = $('#liveLog').textContent;
+    try { if (NATIVE.copy(text)) toast('Journal copié'); } catch (e) {}
+  });
   $('#liveClose').addEventListener('click', closeLive);
   liveToggle.addEventListener('click', () => { if (liveRunning) { try { NATIVE.liveStop(); } catch (e) {} } else liveStart(); });
   // Back from the pocket (or from the notification): the screen shows what was heard meanwhile.

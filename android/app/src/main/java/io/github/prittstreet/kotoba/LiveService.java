@@ -1,5 +1,6 @@
 package io.github.prittstreet.kotoba;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -8,20 +9,29 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.media.AudioDeviceInfo;
+import android.media.AudioFormat;
 import android.media.AudioManager;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.ParcelFileDescriptor;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
+import android.system.StructPollfd;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.ServiceCompat;
@@ -32,13 +42,16 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -75,6 +88,14 @@ public class LiveService extends Service implements RecognitionListener, TextToS
     private static final List<JSONObject> phrases = new ArrayList<>();
     /** Tokens used, not yet added to the page's cost estimate: [input, output] per phrase. */
     private static final List<int[]> usage = new ArrayList<>();
+    /** What happened, for the Live screen's journal (to send when something goes wrong). */
+    private static final List<String> journal = new ArrayList<>();
+
+    // Boosted microphone (Android 13+): Kotoba records the phone's own microphone (never the
+    // earphones'), raises quiet and distant voices, and hands that sound to the recognizer.
+    private static final int RATE = 16000;
+    private static final float TARGET = 6000f;  // loudness the voices are raised to (of 32767)
+    private static final float MAX_GAIN = 8f;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable restart = this::listen;
@@ -89,6 +110,14 @@ public class LiveService extends Service implements RecognitionListener, TextToS
     private long sessionAt;
     private int failures;
     private int seq;
+    private AudioRecord mic;
+    private Thread micThread;
+    private volatile boolean boosted;              // the recognizer gets our boosted sound
+    private volatile ParcelFileDescriptor pipeOut; // where the current session's sound goes
+    private ParcelFileDescriptor pipeIn;           // the recognizer's end of it
+    private volatile int unread;                   // sound the recognizer did not take (20 ms pieces)
+    private int quickFails;
+    private long levelAt;
 
     // ---------- called by MainActivity / Bridge ----------
 
@@ -111,6 +140,9 @@ public class LiveService extends Service implements RecognitionListener, TextToS
             o.put("running", s != null);
             o.put("headphones", s != null && s.headphones());
             o.put("partial", s == null ? "" : s.partial);
+            synchronized (journal) {
+                o.put("journal", new JSONArray(journal));
+            }
             synchronized (phrases) {
                 o.put("phrases", new JSONArray(phrases.toString()));
             }
@@ -164,6 +196,11 @@ public class LiveService extends Service implements RecognitionListener, TextToS
             stopSelf();
             return;
         }
+        synchronized (journal) {
+            journal.clear();
+        }
+        boosted = startMic();
+        note(boosted ? "micro du téléphone amplifié" : "micro standard de la reconnaissance vocale");
         create();
         listen();
         emitState("listening", null);
@@ -183,6 +220,8 @@ public class LiveService extends Service implements RecognitionListener, TextToS
             tts.stop();
             tts.shutdown();
         }
+        stopMic();
+        closePipe();
         if (wake != null && wake.isHeld()) wake.release();
         net.shutdownNow();
         emitState("stopped", null);
@@ -220,13 +259,29 @@ public class LiveService extends Service implements RecognitionListener, TextToS
         rec.setRecognitionListener(this);
     }
 
+    @SuppressLint("InlinedApi") // the audio-source extras are only used when boosted, that is on Android 13+
     private void listen() {
         if (!active) return;
         if (rec == null) create();
         partial = "";
         sessionAt = SystemClock.elapsedRealtime();
         try {
-            rec.startListening(intent);
+            Intent i = intent;
+            if (boosted) {
+                closePipe();
+                ParcelFileDescriptor[] p = ParcelFileDescriptor.createPipe();
+                pipeIn = p[0];
+                pipeOut = p[1];
+                unread = 0;
+                i = new Intent(intent)
+                        .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipeIn)
+                        .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+                        .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+                        .putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, RATE);
+            }
+            rec.startListening(i);
+        } catch (IOException e) {
+            fallBack("pas de canal pour le son amplifié");
         } catch (RuntimeException e) {
             again(1000);
         }
@@ -258,6 +313,12 @@ public class LiveService extends Service implements RecognitionListener, TextToS
     public void onError(int error) {
         if (!active) return;
         boolean quick = SystemClock.elapsedRealtime() - sessionAt < SHORT_SESSION_MS;
+        if (error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) note("erreur " + error);
+        if (boosted && quick && error != SpeechRecognizer.ERROR_NO_MATCH && ++quickFails >= 3) {
+            fallBack("la reconnaissance refuse le son amplifié (erreur " + error + ")");
+            return;
+        }
+        if (!quick) quickFails = 0;
         switch (error) {
             case SpeechRecognizer.ERROR_NO_MATCH:
             case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
@@ -289,7 +350,10 @@ public class LiveService extends Service implements RecognitionListener, TextToS
 
     @Override public void onReadyForSpeech(Bundle params) {}
     @Override public void onBeginningOfSpeech() {}
-    @Override public void onRmsChanged(float rmsdB) {}
+    @Override
+    public void onRmsChanged(float rmsdB) {
+        if (!boosted) level((rmsdB + 2f) / 12f); // the recognizer's own scale, about -2 to 10 dB
+    }
     @Override public void onBufferReceived(byte[] buffer) {}
     @Override public void onEndOfSpeech() {}
     @Override public void onEvent(int eventType, Bundle params) {}
@@ -298,6 +362,153 @@ public class LiveService extends Service implements RecognitionListener, TextToS
         ArrayList<String> r = b == null ? null : b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
         if (r == null || r.isEmpty() || r.get(0) == null) return "";
         return r.get(0).trim();
+    }
+
+    // ---------- boosted microphone ----------
+
+    private boolean startMic() {
+        if (Build.VERSION.SDK_INT < 33) return false;
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return false;
+        int min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+        try {
+            mic = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE, AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT, Math.max(min, RATE * 2));
+        } catch (IllegalArgumentException | SecurityException e) {
+            note("micro amplifié impossible : " + e.getMessage());
+            mic = null;
+            return false;
+        }
+        if (mic.getState() != AudioRecord.STATE_INITIALIZED) {
+            note("micro amplifié indisponible");
+            mic.release();
+            mic = null;
+            return false;
+        }
+        // the phone's microphone, even with earphones connected (theirs filters out the voices around)
+        AudioManager am = getSystemService(AudioManager.class);
+        for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_INPUTS)) {
+            if (d.getType() == AudioDeviceInfo.TYPE_BUILTIN_MIC) {
+                mic.setPreferredDevice(d);
+                break;
+            }
+        }
+        try {
+            mic.startRecording();
+        } catch (IllegalStateException e) {
+            note("micro amplifié refusé");
+            mic.release();
+            mic = null;
+            return false;
+        }
+        AudioDeviceInfo routed = mic.getRoutedDevice();
+        if (routed != null) note("entrée : " + (routed.getType() == AudioDeviceInfo.TYPE_BUILTIN_MIC ? "micro du téléphone" : "appareil " + routed.getType()));
+        micThread = new Thread(this::pump, "kotoba-live-mic");
+        micThread.start();
+        return true;
+    }
+
+    /** Microphone thread: raise the sound to a steady loudness and pass it to the current session. */
+    private void pump() {
+        short[] in = new short[RATE / 50]; // 20 ms
+        byte[] out = new byte[in.length * 2];
+        StructPollfd[] poll = {new StructPollfd()};
+        float gain = 1f, env = 0f;
+        AudioRecord m = mic;
+        while (m != null && boosted) {
+            int n = m.read(in, 0, in.length);
+            if (n <= 0) {
+                if (n < 0) break;
+                continue;
+            }
+            double sum = 0;
+            for (int i = 0; i < n; i++) sum += (double) in[i] * in[i];
+            float rms = (float) Math.sqrt(sum / n);
+            env = rms > env ? rms : env * 0.995f + rms * 0.005f; // follows a voice up at once, down slowly
+            float want = env < 20f ? 1f : Math.min(MAX_GAIN, Math.max(1f, TARGET / env));
+            gain += (want - gain) * 0.05f;
+            for (int i = 0; i < n; i++) {
+                float v = in[i] * gain;
+                if (v > 24000f) v = 24000f + (v - 24000f) * 0.15f; // soft limit instead of clipping
+                else if (v < -24000f) v = -24000f + (v + 24000f) * 0.15f;
+                short x = (short) Math.max(-32767f, Math.min(32767f, v));
+                out[2 * i] = (byte) (x & 0xff);
+                out[2 * i + 1] = (byte) ((x >> 8) & 0xff);
+            }
+            level(Math.min(1f, rms * gain / 12000f));
+            ParcelFileDescriptor o = pipeOut;
+            if (o == null) continue;
+            try {
+                FileDescriptor fd = o.getFileDescriptor();
+                poll[0].fd = fd;
+                poll[0].events = (short) OsConstants.POLLOUT;
+                poll[0].revents = 0;
+                if (Os.poll(poll, 0) > 0 && (poll[0].revents & OsConstants.POLLOUT) != 0) {
+                    Os.write(fd, out, 0, n * 2);
+                    unread = 0;
+                } else if (++unread == 75 && SystemClock.elapsedRealtime() - sessionAt > 1500) {
+                    // 1.5 s the recognizer has not read: it listens to its own microphone instead
+                    main.post(() -> fallBack("la reconnaissance n’utilise pas le son amplifié"));
+                }
+            } catch (ErrnoException | IOException e) {
+                // the session just ended and its pipe was closed: the next one takes over
+            }
+        }
+    }
+
+    private void fallBack(String why) {
+        if (!boosted) return;
+        note("retour au micro standard : " + why);
+        boosted = false;
+        stopMic();
+        closePipe();
+        if (rec != null) rec.cancel();
+        again(200);
+    }
+
+    private void stopMic() {
+        boosted = false;
+        AudioRecord m = mic;
+        mic = null;
+        if (m != null) {
+            try {
+                m.stop();
+            } catch (IllegalStateException ignored) {
+                // not recording
+            }
+            m.release();
+        }
+        micThread = null;
+    }
+
+    private void closePipe() {
+        ParcelFileDescriptor o = pipeOut, i = pipeIn;
+        pipeOut = null;
+        pipeIn = null;
+        try {
+            if (o != null) o.close();
+            if (i != null) i.close();
+        } catch (IOException ignored) {
+            // already closed
+        }
+    }
+
+    /** 0..1 for the Live screen's level bar, a few times a second. */
+    private void level(float v) {
+        long now = SystemClock.elapsedRealtime();
+        if (now - levelAt < 250) return;
+        levelAt = now;
+        try {
+            emit(new JSONObject().put("type", "level").put("level", Math.max(0f, Math.min(1f, v))));
+        } catch (JSONException ignored) {
+            // a number
+        }
+    }
+
+    private static void note(String line) {
+        synchronized (journal) {
+            journal.add(new SimpleDateFormat("HH:mm:ss", Locale.ROOT).format(new Date()) + "  " + line);
+            while (journal.size() > 80) journal.remove(0);
+        }
     }
 
     // ---------- translating ----------
@@ -319,6 +530,7 @@ public class LiveService extends Service implements RecognitionListener, TextToS
             while (phrases.size() > MAX_PHRASES) phrases.remove(0);
         }
         emitPhrase(p);
+        note("entendu : " + p.optString("ja"));
         net.execute(() -> {
             String fr, err = "";
             try {
@@ -344,6 +556,7 @@ public class LiveService extends Service implements RecognitionListener, TextToS
             }
         }
         emitPhrase(p);
+        if (!err.isEmpty()) note("traduction impossible : " + err);
         if (!active || noise || !err.isEmpty()) return;
         getSystemService(NotificationManager.class).notify(NOTIFICATION, notification(fr));
         // out loud only in the earphones: from the loudspeaker the microphone would hear it

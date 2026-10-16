@@ -166,6 +166,8 @@ a{color:var(--ai)}
 .live-head{min-width:0}
 .live-head h2{margin:0}
 .live-state{margin:0;font-size:.82rem;color:var(--muted)}
+.meter{height:4px;margin-top:6px;border-radius:2px;background:var(--line);overflow:hidden;max-width:220px}
+.meter i{display:block;height:100%;width:0;background:var(--ai);transition:width .2s linear}
 .live-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding-block:16px}
 .live-list .intro{margin:auto 0}
 .lp{display:flex;flex-direction:column;gap:2px}
