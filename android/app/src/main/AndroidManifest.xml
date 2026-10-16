@@ -8,7 +8,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- No CAMERA permission on purpose: the camera app takes the photo for us. -->
+    <!-- Camera live only: for photos, the camera app takes the picture for us. -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -51,6 +52,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".CameraLiveActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
 
         <service
             android:name=".LiveService"

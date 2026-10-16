@@ -34,7 +34,7 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
   - Pont JS `window.KotobaAndroid` (`Bridge.java`) : `canListen`,
     `startListening("fr-FR"|"ja-JP", silenceMs)`, `stopListening`, `cancelListening`,
     `keyboard("fr"|"ja", show)`, `speak(text, "fr"|"ja")`, `stopSpeaking`, `voice("female"|"male")`,
-    `voices`, `copy`, `insets`, `darkBars`, `config`, `version`. Retours vers la page : `kotobaNative.speech({type, text, code})`
+    `voices`, `copy`, `insets`, `darkBars`, `config`, `cameraLive(key, workspace)`, `version`. Retours vers la page : `kotobaNative.speech({type, text, code})`
     (`ready`, `partial`, `final`, `error`, `log`, `timer` avec `ms`), `kotobaNative.keyboard({wanted,
     actual, ime})`, `kotobaInsets(top, bottom)`, `kotobaBack()`.
   - Micro : `SpeechRecognizer` d'Android (`SpeechInput.java`), langue imposée par le bouton :
@@ -97,6 +97,18 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     une phrase seul : Kotoba coupe (1,2 s sans mot nouveau, ou toutes les 12 s), `stopListening`, et
     garde le son entre deux sessions (aucun mot perdu). Choix de Ronan après essai : phrase par
     phrase en français naturel (le mot à mot en vrac par morceaux de 4 s a été écarté).
+  - Caméra live (bouton viseur en haut, `CameraLiveActivity`, écran natif à part) : le japonais filmé
+    est traduit sur place, étiquettes qui suivent le texte quand le téléphone bouge (« façon Google
+    Lens », mais traduit par Claude : voulu par Ronan). Lecture du texte sur le téléphone, hors ligne,
+    plusieurs fois par seconde (ML Kit japonais intégré à l'APK, CameraX `MlKitAnalyzer` en
+    coordonnées de l'écran) ; chaque ligne est suivie d'une image à l'autre (`LabelsView` : même texte,
+    ou lecture voisine et ressemblante) et ses étiquettes glissent vers la nouvelle position. Une ligne
+    lue sur 2 images est traduite une seule fois par Claude Haiku (`Claude.java`, lignes groupées,
+    une requête à la fois, réponse en tableau JSON, « - » = bruit), puis gardée en mémoire (500
+    textes, aussi pour une lecture qui diffère d'une lettre). « Figer » fige l'image (retour Android
+    = reprendre), « Lampe » si le téléphone en a une. Permission CAMERA demandée par l'écran
+    lui-même. Ses tokens comptent dans l'estimation du coût au retour dans l'app (`liveUsage`).
+    APK limité aux processeurs ARM (`abiFilters`) : la lecture du texte pèse 11 Mo par type.
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
   - Pas de `backdrop-filter` sur les traductions des photos : sur un Samsung, elles se

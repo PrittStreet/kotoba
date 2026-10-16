@@ -41,14 +41,8 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
 import java.io.FileDescriptor;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -72,7 +66,6 @@ public class LiveService extends Service implements RecognitionListener, TextToS
     static final String ACTION_STOP = "io.github.prittstreet.kotoba.LIVE_STOP";
     private static final String CHANNEL = "live";
     private static final int NOTIFICATION = 7;
-    private static final String MODEL = "claude-haiku-5-5";
     private static final int MAX_PHRASES = 100;
     /** A session that fails faster than this is not listening: wait a little before the next. */
     private static final long SHORT_SESSION_MS = 700;
@@ -174,6 +167,13 @@ public class LiveService extends Service implements RecognitionListener, TextToS
             usage.clear();
         }
         return a.toString();
+    }
+
+    /** Tokens spent by the Android side (Live, camera), for the page's cost estimate. */
+    static void addUsage(int in, int out) {
+        synchronized (usage) {
+            usage.add(new int[]{in, out});
+        }
     }
 
     // ---------- service ----------
@@ -614,7 +614,7 @@ public class LiveService extends Service implements RecognitionListener, TextToS
         net.execute(() -> {
             String fr, err = "";
             try {
-                fr = ask(p.optString("ja"), context);
+                fr = Claude.ask(key, workspace, prompt(p.optString("ja"), context), 400);
             } catch (IOException | JSONException e) {
                 fr = "";
                 err = e instanceof IOException && e.getMessage() != null && !e.getMessage().isEmpty()
@@ -666,74 +666,6 @@ public class LiveService extends Service implements RecognitionListener, TextToS
                 + "- Answer with the French only: no quotes, no notes, no Markdown.\n"
                 + (context.isEmpty() ? "" : "\nHeard just before (context only, do not translate):\n" + context)
                 + "\nHeard now:\n\"\"\"\n" + ja + "\n\"\"\"";
-    }
-
-    /** One call to Claude; the French, or "-" for noise. Network thread. */
-    private String ask(String ja, String context) throws IOException, JSONException {
-        if (key.isEmpty()) throw new IOException("Ajoute ta clé API dans les réglages.");
-        JSONObject body = new JSONObject()
-                .put("model", MODEL)
-                .put("max_tokens", 400)
-                .put("output_config", new JSONObject().put("effort", "low"))
-                .put("messages", new JSONArray().put(new JSONObject().put("role", "user").put("content", prompt(ja, context))));
-        HttpURLConnection c = (HttpURLConnection) new URL("https://api.anthropic.com/v1/messages").openConnection();
-        try {
-            c.setConnectTimeout(10000);
-            c.setReadTimeout(30000);
-            c.setRequestMethod("POST");
-            c.setDoOutput(true);
-            c.setRequestProperty("content-type", "application/json");
-            c.setRequestProperty("x-api-key", key);
-            c.setRequestProperty("anthropic-version", "2023-06-01");
-            if (!workspace.isEmpty()) c.setRequestProperty("anthropic-workspace-id", workspace);
-            try (OutputStream o = c.getOutputStream()) {
-                o.write(body.toString().getBytes(StandardCharsets.UTF_8));
-            }
-            int code = c.getResponseCode();
-            String res = read(code >= 400 ? c.getErrorStream() : c.getInputStream());
-            if (code >= 400) throw new IOException(problem(code, res));
-            JSONObject j = new JSONObject(res);
-            StringBuilder text = new StringBuilder();
-            JSONArray content = j.optJSONArray("content");
-            for (int i = 0; content != null && i < content.length(); i++) {
-                JSONObject b = content.optJSONObject(i);
-                if (b != null && "text".equals(b.optString("type"))) text.append(b.optString("text"));
-            }
-            JSONObject u = j.optJSONObject("usage");
-            if (u != null) {
-                synchronized (usage) {
-                    usage.add(new int[]{u.optInt("input_tokens"), u.optInt("output_tokens")});
-                }
-            }
-            return text.toString().trim();
-        } finally {
-            c.disconnect();
-        }
-    }
-
-    private static String problem(int code, String res) {
-        String msg = "";
-        try {
-            msg = new JSONObject(res).optJSONObject("error").optString("message");
-        } catch (JSONException | NullPointerException ignored) {
-            // no JSON: the status says enough
-        }
-        if (code == 401) return "Clé API refusée : vérifie-la dans les réglages.";
-        if (msg.toLowerCase(Locale.ROOT).contains("credit balance")) return "Plus de crédit sur le compte Claude.";
-        if (msg.toLowerCase(Locale.ROOT).contains("usage limit")) return "Limite de dépenses de la clé atteinte.";
-        if (code == 429) return "Trop de demandes d’un coup.";
-        if (code == 529 || code >= 500) return "Claude est surchargé.";
-        return "Erreur " + code + (msg.isEmpty() ? "" : " : " + msg);
-    }
-
-    private static String read(InputStream in) throws IOException {
-        if (in == null) return "";
-        try (InputStream s = in) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            byte[] buf = new byte[8192];
-            for (int n; (n = s.read(buf)) > 0; ) out.write(buf, 0, n);
-            return out.toString("UTF-8");
-        }
     }
 
     // ---------- voice ----------

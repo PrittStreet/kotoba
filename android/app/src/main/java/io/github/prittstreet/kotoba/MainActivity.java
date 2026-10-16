@@ -205,6 +205,16 @@ public class MainActivity extends Activity implements LiveService.Listener {
                 : new String[]{Manifest.permission.RECORD_AUDIO}, REQ_LIVE);
     }
 
+    // ---------- Camera live (CameraLiveActivity asks for the camera itself) ----------
+
+    void startCameraLive(String key, String workspace) {
+        speech.cancel();
+        voice.stop();
+        startActivity(new Intent(this, CameraLiveActivity.class)
+                .putExtra(CameraLiveActivity.EXTRA_KEY, key)
+                .putExtra(CameraLiveActivity.EXTRA_WORKSPACE, workspace));
+    }
+
     @Override
     public void onLive(JSONObject ev) {
         web.evaluateJavascript("window.kotobaLive && kotobaLive(" + ev + ")", null);

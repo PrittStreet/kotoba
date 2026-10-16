@@ -134,6 +134,13 @@ final class Bridge {
         return LiveService.takeUsage();
     }
 
+    // ---------- Camera live: the Japanese the camera sees, translated in place ----------
+
+    @JavascriptInterface
+    public void cameraLive(String key, String workspace) {
+        app.runOnUiThread(() -> app.startCameraLive(key, workspace));
+    }
+
     @JavascriptInterface
     public String version() {
         try {
