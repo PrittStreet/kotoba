@@ -1947,6 +1947,15 @@
     stopSpeaking();
     try { NATIVE.cameraLive(getKey(), getWorkspace()); } catch (e) {}
   });
+  // "Photo" in the camera: the picture on screen, translated like a photo taken
+  window.kotobaPhoto = async (url) => {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(String(r.status));
+      const blob = await r.blob();
+      handlePhoto(new File([blob], 'camera.jpg', { type: 'image/jpeg' }));
+    } catch (e) { toast('Photo introuvable : réessaie.'); }
+  };
   // back from the camera: its translations go into the cost estimate
   document.addEventListener('visibilitychange', () => { if (!document.hidden && NATIVE && NATIVE.liveUsage) liveCount(); });
 

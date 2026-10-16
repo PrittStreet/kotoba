@@ -55,6 +55,7 @@ public class MainActivity extends Activity implements LiveService.Listener {
     private static final int REQ_FILES = 1;
     private static final int REQ_MIC = 2;
     private static final int REQ_LIVE = 3;
+    private static final int REQ_CAMERA_LIVE = 4;
 
     private KotobaWebView web;
     private WebViewAssetLoader assets;
@@ -108,6 +109,8 @@ public class MainActivity extends Activity implements LiveService.Listener {
 
         assets = new WebViewAssetLoader.Builder()
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
+                // a picture taken in camera live, handed to the page's photo translation
+                .addPathHandler("/photos/", new WebViewAssetLoader.InternalStoragePathHandler(this, new File(getCacheDir(), "photos")))
                 .build();
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -210,9 +213,9 @@ public class MainActivity extends Activity implements LiveService.Listener {
     void startCameraLive(String key, String workspace) {
         speech.cancel();
         voice.stop();
-        startActivity(new Intent(this, CameraLiveActivity.class)
+        startActivityForResult(new Intent(this, CameraLiveActivity.class)
                 .putExtra(CameraLiveActivity.EXTRA_KEY, key)
-                .putExtra(CameraLiveActivity.EXTRA_WORKSPACE, workspace));
+                .putExtra(CameraLiveActivity.EXTRA_WORKSPACE, workspace), REQ_CAMERA_LIVE);
     }
 
     @Override
@@ -359,6 +362,13 @@ public class MainActivity extends Activity implements LiveService.Listener {
     @Override
     @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQ_CAMERA_LIVE) {
+            String name = resultCode == RESULT_OK && data != null ? data.getStringExtra(CameraLiveActivity.EXTRA_PHOTO) : null;
+            if (name != null && name.matches("[\\w.-]+")) {
+                web.evaluateJavascript("window.kotobaPhoto && kotobaPhoto('/photos/" + name + "')", null);
+            }
+            return;
+        }
         if (requestCode != REQ_FILES) {
             super.onActivityResult(requestCode, resultCode, data);
             return;

@@ -4,7 +4,6 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Point;
 import android.graphics.RectF;
 import android.os.SystemClock;
 import android.text.Layout;
@@ -28,19 +27,19 @@ final class LabelsView extends View {
     /** Gliding: the time to cover about two thirds of the way to the new position. */
     private static final float GLIDE_MS = 70f;
 
-    /** A line read in one picture: its text and its four corners on the screen. */
+    /** A line read in one picture: its text and its four corners on the screen (x0, y0, … x3, y3, clockwise from top left). */
     static final class Seen {
         final String key, ja;
         final float cx, cy, w, h, angle;
 
-        Seen(String key, String ja, Point[] p) {
+        Seen(String key, String ja, float[] p) {
             this.key = key;
             this.ja = ja;
-            cx = (p[0].x + p[1].x + p[2].x + p[3].x) / 4f;
-            cy = (p[0].y + p[1].y + p[2].y + p[3].y) / 4f;
-            w = (float) Math.hypot(p[1].x - p[0].x, p[1].y - p[0].y);
-            h = (float) Math.hypot(p[3].x - p[0].x, p[3].y - p[0].y);
-            float a = (float) Math.toDegrees(Math.atan2(p[1].y - p[0].y, p[1].x - p[0].x));
+            cx = (p[0] + p[2] + p[4] + p[6]) / 4f;
+            cy = (p[1] + p[3] + p[5] + p[7]) / 4f;
+            w = (float) Math.hypot(p[2] - p[0], p[3] - p[1]);
+            h = (float) Math.hypot(p[6] - p[0], p[7] - p[1]);
+            float a = (float) Math.toDegrees(Math.atan2(p[3] - p[1], p[2] - p[0]));
             // upside down or nearly: drawn the right way up, the label still covers the text
             while (a > 90) a -= 180;
             while (a <= -90) a += 180;
@@ -92,7 +91,6 @@ final class LabelsView extends View {
     private final RectF rect = new RectF();
     private final float dp, minSize, maxSize, pad, radius;
     private Translations translations;
-    private boolean frozen;
     private long drawnAt;
 
     LabelsView(Context context) {
@@ -111,14 +109,6 @@ final class LabelsView extends View {
 
     void setTranslations(Translations t) {
         translations = t;
-    }
-
-    /** Frozen picture: the labels stay where they are. */
-    void setFrozen(boolean f) {
-        frozen = f;
-        long now = SystemClock.uptimeMillis();
-        for (Label l : labels) l.seenAt = now;
-        invalidate();
     }
 
     List<Label> labels() {
@@ -146,7 +136,7 @@ final class LabelsView extends View {
                 labels.add(l);
             }
         }
-        if (!frozen) labels.removeIf(l -> now - l.seenAt > GONE_MS);
+        labels.removeIf(l -> now - l.seenAt > GONE_MS);
         invalidate();
     }
 

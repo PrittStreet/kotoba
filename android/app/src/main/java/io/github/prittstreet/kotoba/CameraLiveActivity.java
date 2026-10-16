@@ -1,10 +1,15 @@
 package io.github.prittstreet.kotoba;
 
 import android.Manifest;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.Point;
+import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.drawable.GradientDrawable;
+import android.media.Image;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -15,24 +20,23 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
 import androidx.activity.EdgeToEdge;
-import androidx.activity.OnBackPressedCallback;
 import androidx.activity.SystemBarStyle;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.OptIn;
 import androidx.camera.core.CameraInfo;
 import androidx.camera.core.CameraSelector;
-import androidx.camera.core.ImageAnalysis;
+import androidx.camera.core.ExperimentalGetImage;
+import androidx.camera.core.ImageProxy;
 import androidx.camera.core.resolutionselector.AspectRatioStrategy;
 import androidx.camera.core.resolutionselector.ResolutionSelector;
 import androidx.camera.core.resolutionselector.ResolutionStrategy;
-import androidx.camera.mlkit.vision.MlKitAnalyzer;
 import androidx.camera.view.CameraController;
 import androidx.camera.view.LifecycleCameraController;
 import androidx.camera.view.PreviewView;
@@ -41,6 +45,7 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
@@ -48,11 +53,14 @@ import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions;
 
 import org.json.JSONArray;
 import org.json.JSONException;
+import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.text.Normalizer;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -66,11 +74,13 @@ import java.util.regex.Pattern;
  * Camera live: the Japanese the camera sees, translated in place, the labels moving with the text.
  * The phone reads the text itself (ML Kit, offline, several times a second) and follows each line;
  * Claude translates each new line once (Haiku, a few lines per request), then the translation is
- * remembered. "Figer" freezes the picture to read it calmly.
+ * remembered. "Photo" hands what is on screen to the app's photo translation (as a photo taken).
  */
 public class CameraLiveActivity extends ComponentActivity {
     static final String EXTRA_KEY = "key";
     static final String EXTRA_WORKSPACE = "workspace";
+    /** Result: the file name of the picture taken, in the app's cache "photos" folder. */
+    static final String EXTRA_PHOTO = "photo";
     private static final Pattern JAPANESE = Pattern.compile("[\\u3040-\\u30ff\\u3400-\\u9fff\\uf900-\\ufaff\\uff66-\\uff9f]");
     private static final Pattern SPACES = Pattern.compile("\\s+");
     /** A line read in at least this many pictures is real text, not a reading glitch: it is translated. */
@@ -78,6 +88,8 @@ public class CameraLiveActivity extends ComponentActivity {
     private static final int MAX_BATCH = 20;
     private static final int MAX_CONTEXT = 12;
     private static final int CACHE_SIZE = 500;
+    /** A line Claude skipped this many times is left untranslated. */
+    private static final int MAX_TRIES = 2;
 
     /** Translations kept between visits, by text read: "-" for noise. Main thread. */
     private static final Map<String, String> cache = new LinkedHashMap<String, String>(64, 0.75f, true) {
@@ -86,6 +98,7 @@ public class CameraLiveActivity extends ComponentActivity {
             return size() > CACHE_SIZE;
         }
     };
+    private static final Map<String, Integer> tries = new HashMap<>();
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService net = Executors.newSingleThreadExecutor();
@@ -94,14 +107,11 @@ public class CameraLiveActivity extends ComponentActivity {
     private final Runnable retry = this::request;
     private String key = "", workspace = "";
     private PreviewView preview;
-    private ImageView still;
     private LabelsView labels;
-    private TextView status, torch, freeze;
+    private TextView status, torch;
     private LifecycleCameraController controller;
     private TextRecognizer recognizer;
-    private MlKitAnalyzer analyzer;
-    private OnBackPressedCallback unfreezeOnBack;
-    private boolean frozen, torchOn, cameraReady, destroyed;
+    private boolean torchOn, cameraReady, destroyed, taking;
     private String error = "";
     private long retryAt;
     private int failures;
@@ -123,13 +133,6 @@ public class CameraLiveActivity extends ComponentActivity {
         key = nonNull(getIntent().getStringExtra(EXTRA_KEY));
         workspace = nonNull(getIntent().getStringExtra(EXTRA_WORKSPACE));
         build();
-        unfreezeOnBack = new OnBackPressedCallback(false) {
-            @Override
-            public void handleOnBackPressed() {
-                setFrozen(false);
-            }
-        };
-        getOnBackPressedDispatcher().addCallback(this, unfreezeOnBack);
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) startCamera();
         else permission.launch(Manifest.permission.CAMERA);
     }
@@ -146,10 +149,6 @@ public class CameraLiveActivity extends ComponentActivity {
         preview = new PreviewView(this);
         preview.setScaleType(PreviewView.ScaleType.FILL_CENTER);
         root.addView(preview, match());
-        still = new ImageView(this);
-        still.setScaleType(ImageView.ScaleType.FIT_XY);
-        still.setVisibility(View.GONE);
-        root.addView(still, match());
         labels = new LabelsView(this);
         labels.setTranslations(cache::get);
         root.addView(labels, match());
@@ -173,11 +172,11 @@ public class CameraLiveActivity extends ComponentActivity {
         torch = button("Lampe", Color.argb(170, 0, 0, 0));
         torch.setVisibility(View.GONE);
         torch.setOnClickListener(v -> setTorch(!torchOn));
-        freeze = button("Figer", 0xFFBD3F2A);
-        freeze.setOnClickListener(v -> setFrozen(!frozen));
+        TextView shoot = button("Photo", 0xFFBD3F2A);
+        shoot.setOnClickListener(v -> takePhoto());
         bar.addView(close, barItem());
         bar.addView(torch, barItem());
-        bar.addView(freeze, barItem());
+        bar.addView(shoot, barItem());
         root.addView(bar, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM));
 
@@ -240,19 +239,15 @@ public class CameraLiveActivity extends ComponentActivity {
         controller.setCameraSelector(CameraSelector.DEFAULT_BACK_CAMERA);
         controller.setEnabledUseCases(CameraController.IMAGE_ANALYSIS);
         // a sharp enough picture for small writing, the same shape as the preview's
-        ResolutionSelector shape = new ResolutionSelector.Builder()
+        controller.setPreviewResolutionSelector(new ResolutionSelector.Builder()
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
-                .build();
-        controller.setPreviewResolutionSelector(shape);
+                .build());
         controller.setImageAnalysisResolutionSelector(new ResolutionSelector.Builder()
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
                 .setResolutionStrategy(new ResolutionStrategy(new Size(1920, 1080),
                         ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
                 .build());
-        // the positions come back on the screen's coordinates, wherever the preview is cropped
-        analyzer = new MlKitAnalyzer(Collections.singletonList(recognizer), ImageAnalysis.COORDINATE_SYSTEM_VIEW_REFERENCED,
-                ContextCompat.getMainExecutor(this), result -> onText(result.getValue(recognizer)));
-        controller.setImageAnalysisAnalyzer(analysis, analyzer);
+        controller.setImageAnalysisAnalyzer(analysis, this::analyze);
         controller.bindToLifecycle(this);
         preview.setController(controller);
         controller.getInitializationFuture().addListener(() -> {
@@ -267,16 +262,66 @@ public class CameraLiveActivity extends ComponentActivity {
         }, ContextCompat.getMainExecutor(this));
     }
 
+    /**
+     * One picture from the camera, read by ML Kit. Its positions are on the picture turned upright;
+     * the part shown on screen is the picture's crop rectangle, scaled to fill the screen. The next
+     * picture comes once this one is read.
+     */
+    @OptIn(markerClass = ExperimentalGetImage.class)
+    private void analyze(ImageProxy proxy) {
+        Image image = proxy.getImage();
+        if (image == null || destroyed || taking) {
+            proxy.close();
+            return;
+        }
+        int rotation = proxy.getImageInfo().getRotationDegrees();
+        RectF shown = upright(proxy.getCropRect(), rotation, proxy.getWidth(), proxy.getHeight());
+        try {
+            recognizer.process(InputImage.fromMediaImage(image, rotation))
+                    .addOnCompleteListener(ContextCompat.getMainExecutor(this), task -> {
+                        proxy.close();
+                        if (task.isSuccessful()) onText(task.getResult(), shown);
+                    });
+        } catch (RuntimeException e) {
+            proxy.close(); // recognizer closed meanwhile
+        }
+    }
+
+    /** A rectangle of the picture as it comes from the camera, on the picture turned upright (clockwise). */
+    static RectF upright(Rect r, int rotation, int w, int h) {
+        switch (rotation) {
+            case 90:
+                return new RectF(h - r.bottom, r.left, h - r.top, r.right);
+            case 180:
+                return new RectF(w - r.right, h - r.bottom, w - r.left, h - r.top);
+            case 270:
+                return new RectF(r.top, w - r.right, r.bottom, w - r.left);
+            default:
+                return new RectF(r);
+        }
+    }
+
     /** A picture read: the lines in Japanese move their labels, the new ones are translated. */
-    private void onText(Text text) {
-        if (destroyed || frozen || text == null) return;
+    private void onText(Text text, RectF shown) {
+        if (destroyed || taking || text == null) return;
+        float vw = labels.getWidth(), vh = labels.getHeight();
+        if (vw <= 0 || vh <= 0 || shown.width() <= 0 || shown.height() <= 0) return;
+        // the screen shows the middle of the picture, filling it (like the preview)
+        float s = Math.max(vw / shown.width(), vh / shown.height());
+        float dx = (vw - shown.width() * s) / 2 - shown.left * s;
+        float dy = (vh - shown.height() * s) / 2 - shown.top * s;
         List<LabelsView.Seen> seen = new ArrayList<>();
         for (Text.TextBlock b : text.getTextBlocks()) {
             for (Text.Line line : b.getLines()) {
                 String ja = line.getText().trim();
-                android.graphics.Point[] p = line.getCornerPoints();
+                Point[] p = line.getCornerPoints();
                 if (p == null || p.length < 4 || !JAPANESE.matcher(ja).find()) continue;
-                seen.add(new LabelsView.Seen(normalize(ja), ja, p));
+                float[] q = new float[8];
+                for (int i = 0; i < 4; i++) {
+                    q[2 * i] = p[i].x * s + dx;
+                    q[2 * i + 1] = p[i].y * s + dy;
+                }
+                seen.add(new LabelsView.Seen(normalize(ja), ja, q));
             }
         }
         labels.update(seen);
@@ -289,29 +334,6 @@ public class CameraLiveActivity extends ComponentActivity {
         return SPACES.matcher(Normalizer.normalize(ja, Normalizer.Form.NFKC)).replaceAll("");
     }
 
-    private void setFrozen(boolean f) {
-        if (f == frozen || controller == null) return;
-        if (f) {
-            Bitmap picture = preview.getBitmap();
-            if (picture == null) return; // nothing on screen yet
-            frozen = true;
-            still.setImageBitmap(picture);
-            still.setVisibility(View.VISIBLE);
-            controller.clearImageAnalysisAnalyzer();
-            if (torchOn) setTorch(false);
-        } else {
-            frozen = false;
-            still.setVisibility(View.GONE);
-            still.setImageDrawable(null);
-            controller.setImageAnalysisAnalyzer(analysis, analyzer);
-        }
-        freeze.setText(frozen ? "Reprendre" : "Figer");
-        unfreezeOnBack.setEnabled(frozen);
-        labels.setFrozen(frozen);
-        request(); // frozen: what is on screen is translated even if read only once
-        syncStatus();
-    }
-
     private void setTorch(boolean on) {
         if (!cameraReady || controller == null) return;
         torchOn = on;
@@ -319,7 +341,40 @@ public class CameraLiveActivity extends ComponentActivity {
         torch.setText(on ? "Lampe ✓" : "Lampe");
     }
 
+    /** What is on screen goes to the app's photo translation, the same as a photo taken. */
+    private void takePhoto() {
+        if (taking || controller == null) return;
+        Bitmap picture = preview.getBitmap();
+        if (picture == null) return; // nothing on screen yet
+        taking = true;
+        show("Photo…");
+        File dir = new File(getCacheDir(), "photos");
+        String name = "live-" + System.currentTimeMillis() + ".jpg";
+        net.execute(() -> {
+            boolean ok;
+            //noinspection ResultOfMethodCallIgnored
+            dir.mkdirs();
+            try (FileOutputStream out = new FileOutputStream(new File(dir, name))) {
+                ok = picture.compress(Bitmap.CompressFormat.JPEG, 92, out);
+            } catch (IOException e) {
+                ok = false;
+            }
+            boolean saved = ok;
+            main.post(() -> {
+                if (destroyed) return;
+                if (!saved) {
+                    taking = false;
+                    show("Photo impossible.");
+                    return;
+                }
+                setResult(RESULT_OK, new Intent().putExtra(EXTRA_PHOTO, name));
+                finish();
+            });
+        });
+    }
+
     private void syncStatus() {
+        if (taking) return;
         if (!error.isEmpty()) {
             show(error);
             return;
@@ -327,8 +382,7 @@ public class CameraLiveActivity extends ComponentActivity {
         int waiting = 0;
         List<LabelsView.Label> all = labels.labels();
         for (LabelsView.Label l : all) if (!cache.containsKey(l.key)) waiting++;
-        if (frozen) show(waiting > 0 ? "Image figée · traduction…" : "Image figée.");
-        else if (all.isEmpty()) show("Vise un texte en japonais.");
+        if (all.isEmpty()) show("Vise un texte en japonais.");
         else show(waiting > 0 && !asking.isEmpty() ? "Traduction…" : "");
     }
 
@@ -351,7 +405,7 @@ public class CameraLiveActivity extends ComponentActivity {
                 if (!fr.equals("-") && context.size() < MAX_CONTEXT) context.add(l.key + " → " + fr);
                 continue;
             }
-            if (l.frames < FRAMES_BEFORE_ASKING && !frozen) continue;
+            if (l.frames < FRAMES_BEFORE_ASKING) continue;
             String alike = alike(l.key);
             if (alike != null) {
                 cache.put(l.key, cache.get(alike)); // the same line read slightly differently
@@ -367,29 +421,43 @@ public class CameraLiveActivity extends ComponentActivity {
         }
         asking.addAll(todo);
         String prompt = prompt(todo, context);
-        int max = Math.min(2000, 100 + 60 * todo.size());
+        int max = Math.min(3000, 200 + 80 * todo.size());
         net.execute(() -> {
-            List<String> fr = null;
+            Map<String, String> fr = null;
             String err = "";
             try {
-                fr = parse(Claude.ask(key, workspace, prompt, max), todo.size());
+                fr = parse(Claude.ask(key, workspace, prompt, max), todo);
                 if (fr == null) err = "Traduction illisible, nouvel essai…";
             } catch (IOException e) {
                 err = e.getMessage() == null ? "Pas de réseau : traduction impossible." : e.getMessage();
             } catch (JSONException e) {
                 err = "Traduction illisible, nouvel essai…";
             }
-            List<String> out = fr;
+            Map<String, String> out = fr;
             String problem = err;
             main.post(() -> answered(todo, out, problem));
         });
         syncStatus();
     }
 
-    private void answered(List<String> todo, List<String> fr, String err) {
+    private void answered(List<String> todo, Map<String, String> fr, String err) {
         asking.removeAll(todo);
         if (fr != null) {
-            for (int i = 0; i < todo.size(); i++) cache.put(todo.get(i), fr.get(i));
+            for (String k : todo) {
+                String t = fr.get(k);
+                if (t != null) {
+                    cache.put(k, t);
+                    tries.remove(k);
+                    continue;
+                }
+                // skipped by Claude: asked again with the next lines, then left alone
+                Integer n = tries.get(k);
+                int count = n == null ? 1 : n + 1;
+                if (count >= MAX_TRIES) {
+                    cache.put(k, "-");
+                    tries.remove(k);
+                } else tries.put(k, count);
+            }
             error = "";
             failures = 0;
         } else {
@@ -415,33 +483,47 @@ public class CameraLiveActivity extends ComponentActivity {
     }
 
     private static String prompt(List<String> lines, List<String> context) {
+        JSONObject numbered = new JSONObject();
+        try {
+            for (int i = 0; i < lines.size(); i++) numbered.put(String.valueOf(i + 1), lines.get(i));
+        } catch (JSONException ignored) {
+            // strings only
+        }
         return "You translate the Japanese that a French speaker living in Japan sees through their phone's camera, live: "
                 + "signs, menus, labels, buttons, notices, packaging, screens.\n"
-                + "The lines below were read by text recognition, in reading order. Translate each one into short, natural French, "
-                + "as it would be printed in the same place (a sign stays a sign: « Sortie », « Quai 3 »).\n\n"
+                + "The numbered lines below were read by text recognition, in reading order. Translate each one into short, "
+                + "natural French, as it would be printed in the same place (a sign stays a sign: « Sortie », « Quai 3 »).\n\n"
                 + "Rules:\n"
-                + "- One French string per line, in the same order: exactly " + lines.size() + " strings.\n"
+                + "- Answer with only a JSON object giving the French for every number: {\"1\": \"…\", \"2\": \"…\"}. No Markdown, no notes.\n"
                 + "- Fix obvious recognition mistakes silently.\n"
                 + "- Keep place and station names in rōmaji (Shinjuku), and numbers, prices, times and sizes.\n"
                 + "- A line may be only part of a sentence that goes on in the next line: translate its part so the lines read well in order.\n"
-                + "- A line that is recognition noise or means nothing: exactly \"-\".\n"
-                + "- Answer with only a JSON array of strings: no Markdown, no notes.\n"
+                + "- A line that is recognition noise or means nothing: \"-\".\n"
                 + (context.isEmpty() ? "" : "\nAlso visible, already translated (context only):\n" + String.join("\n", context) + "\n")
-                + "\nLines:\n" + new JSONArray(lines);
+                + "\nLines:\n" + numbered;
     }
 
-    /** The JSON array of the answer, as many strings as lines; null if it is not that. */
-    private static List<String> parse(String answer, int n) throws JSONException {
-        int a = answer.indexOf('['), b = answer.lastIndexOf(']');
+    /** The French by line, from the answer's JSON object (a JSON array also does); null if neither. */
+    static Map<String, String> parse(String answer, List<String> lines) throws JSONException {
+        Map<String, String> out = new HashMap<>();
+        int a = answer.indexOf('{'), b = answer.lastIndexOf('}');
+        if (a >= 0 && b > a) {
+            JSONObject o = new JSONObject(answer.substring(a, b + 1));
+            for (int i = 0; i < lines.size(); i++) put(out, lines.get(i), o.opt(String.valueOf(i + 1)));
+            return out;
+        }
+        a = answer.indexOf('[');
+        b = answer.lastIndexOf(']');
         if (a < 0 || b < a) return null;
         JSONArray arr = new JSONArray(answer.substring(a, b + 1));
-        if (arr.length() != n) return null;
-        List<String> out = new ArrayList<>();
-        for (int i = 0; i < n; i++) {
-            String s = arr.optString(i, "-").trim();
-            out.add(s.isEmpty() ? "-" : s);
-        }
+        if (arr.length() == lines.size()) for (int i = 0; i < lines.size(); i++) put(out, lines.get(i), arr.opt(i));
         return out;
+    }
+
+    private static void put(Map<String, String> out, String line, Object fr) {
+        if (!(fr instanceof String)) return;
+        String s = ((String) fr).trim();
+        out.put(line, s.isEmpty() ? "-" : s);
     }
 
     @Override
