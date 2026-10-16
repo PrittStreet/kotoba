@@ -7,6 +7,7 @@ import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.net.Uri;
@@ -15,6 +16,8 @@ import android.os.Bundle;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.speech.SpeechRecognizer;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
 import android.view.inputmethod.InputMethodSubtype;
@@ -26,7 +29,10 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 import android.window.OnBackInvokedDispatcher;
 
@@ -37,6 +43,7 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.webkit.WebViewAssetLoader;
+import androidx.webkit.WebViewCompat;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -76,6 +83,11 @@ public class MainActivity extends Activity implements LiveService.Listener {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        String problem = webViewProblem();
+        if (problem != null) {
+            showWebViewProblem(problem);
+            return;
+        }
         LiveService.listener = this;
         if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) WebView.setWebContentsDebuggingEnabled(true);
 
@@ -84,7 +96,12 @@ public class MainActivity extends Activity implements LiveService.Listener {
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(getColor(R.color.paper));
-        web = new KotobaWebView(this);
+        try {
+            web = new KotobaWebView(this);
+        } catch (RuntimeException e) {
+            showWebViewProblem("Android System WebView ne démarre pas sur ce téléphone.");
+            return;
+        }
         web.setBackgroundColor(getColor(R.color.paper));
         root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
@@ -409,6 +426,74 @@ public class MainActivity extends Activity implements LiveService.Listener {
             f.delete();
     }
 
+    // ---------- no WebView ----------
+
+    private static final String WEBVIEW = "com.google.android.webview";
+    /** The page needs at least this Chrome version (CSS aspect-ratio for the photos). */
+    private static final int MIN_WEBVIEW = 90;
+
+    /**
+     * The whole app is a page shown by Android System WebView. Missing, disabled, reset to the
+     * phone's first version ("Uninstall updates") or being updated: a clear message, not a crash.
+     */
+    private String webViewProblem() {
+        PackageInfo p;
+        try {
+            p = WebViewCompat.getCurrentWebViewPackage(this);
+        } catch (RuntimeException e) {
+            p = null;
+        }
+        if (p == null) return "Android System WebView est absent ou désactivé sur ce téléphone.";
+        String v = p.versionName == null ? "" : p.versionName;
+        int major = 0;
+        for (int i = 0; i < v.length() && Character.isDigit(v.charAt(i)); i++) major = major * 10 + (v.charAt(i) - '0');
+        if (major > 0 && major < MIN_WEBVIEW) return "Android System WebView est trop ancien sur ce téléphone (version " + v + ").";
+        return null;
+    }
+
+    @SuppressLint("SetTextI18n") // the app is in French only
+    private void showWebViewProblem(String what) {
+        float d = getResources().getDisplayMetrics().density;
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.setBackgroundColor(getColor(R.color.paper));
+        int pad = Math.round(24 * d);
+        box.setPadding(pad, pad, pad, pad);
+        TextView title = new TextView(this);
+        title.setText("Kotoba ne peut pas s’ouvrir");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        title.setTextColor(0xFF151A2C);
+        TextView text = new TextView(this);
+        text.setText(what + "\n\nC’est le composant d’Android qui affiche Kotoba (et les pages dans beaucoup d’applis). "
+                + "Pour le remettre en état : Play Store, cherche « Android System WebView », touche « Mettre à jour » "
+                + "(ou « Activer »). Fais de même pour Chrome, puis redémarre le téléphone.\n\n"
+                + "« Désinstaller » sur WebView n’enlève que ses mises à jour : il suffit de le remettre à jour.");
+        text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        text.setTextColor(0xFF5D6479);
+        text.setPadding(0, Math.round(12 * d), 0, Math.round(20 * d));
+        Button store = new Button(this);
+        store.setText("Ouvrir WebView dans le Play Store");
+        store.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + WEBVIEW)));
+            } catch (ActivityNotFoundException e) {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + WEBVIEW)));
+            }
+        });
+        Button again = new Button(this);
+        again.setText("Réessayer");
+        again.setOnClickListener(v -> {
+            finish();
+            startActivity(new Intent(this, MainActivity.class));
+        });
+        box.addView(title);
+        box.addView(text);
+        box.addView(store);
+        box.addView(again);
+        setContentView(box);
+    }
+
     // ---------- misc ----------
 
     /** Light icons on the status and navigation bars: over the dark photo viewer, or in the dark theme. */
@@ -425,11 +510,15 @@ public class MainActivity extends Activity implements LiveService.Listener {
     @Override
     protected void onStart() {
         super.onStart();
-        web.onResume();
+        if (web != null && speech != null) web.onResume();
     }
 
     @Override
     protected void onStop() {
+        if (web == null || speech == null) { // no WebView: only the help screen is shown
+            super.onStop();
+            return;
+        }
         speech.cancel();
         voice.stop();
         web.onPause();
@@ -439,6 +528,11 @@ public class MainActivity extends Activity implements LiveService.Listener {
     @Override
     protected void onDestroy() {
         if (LiveService.listener == this) LiveService.listener = null; // Live itself goes on
+        if (web == null || speech == null) {
+            if (web != null) web.destroy();
+            super.onDestroy();
+            return;
+        }
         speech.cancel();
         voice.shutdown();
         ((ViewGroup) web.getParent()).removeView(web);

@@ -118,6 +118,9 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     « Lampe » si le téléphone en a une. Permission CAMERA demandée par l'écran lui-même. Ses tokens
     comptent dans l'estimation du coût au retour dans l'app (`liveUsage`).
     APK limité aux processeurs ARM (`abiFilters`) : la lecture du texte pèse 11 Mo par type.
+  - WebView absent, désactivé, trop ancien (< Chrome 90) ou qui ne démarre pas (par exemple après
+    « Désinstaller » les mises à jour d'Android System WebView sur un Samsung) : `MainActivity`
+    affiche un écran d'aide natif (Play Store, Réessayer) au lieu de planter au lancement.
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
   - Pas de `backdrop-filter` sur les traductions des photos : sur un Samsung, elles se
