@@ -453,8 +453,9 @@
       'Line 1: {"title": "<what the photo shows, 2 to 6 words in French>", "turn": <0, 90, 180 or 270>}',
       'turn: how far the whole photo is turned clockwise from upright, judged from most of its text. Phones often save a photo sideways (taken in landscape, or pointing down at a machine or a table). 0: the text reads normally. 90: horizontal writing runs from top to bottom (tops of the letters face right). 270: it runs from bottom to top (tops of the letters face left). 180: upside down. Japanese written vertically (縦書き) with upright characters is upright: 0.',
       'Then one line per text block, in reading order:',
-      '{"b": [x0, y0, x1, y1], "r": <0, 90, 180 or 270>, "o": "<original text>", "t": "<French translation>"}',
+      '{"b": [x0, y0, x1, y1], "r": <0, 90, 180 or 270>, "o": "<original text>", "p": "<rōmaji reading of the original>", "t": "<French translation>"}',
       'b is the bounding box of the ORIGINAL text as integers from 0 to 1000 measured on the whole image as it is (not turned): x goes from the left edge (0) to the right edge (1000), y from the top edge (0) to the bottom edge (1000). Keep each box tight around its text.',
+      'p is the Hepburn rōmaji reading of the original Japanese, with macrons (ō, ū) and spaces between words, so that the French speaker can say it aloud (e.g. "sumibi shiage no yakiniku-don"). Leave p out when the original is not Japanese.',
       'r is the direction the original text runs in the image as it is, in degrees clockwise: 0 left to right, 90 top to bottom (vertical Japanese, or text turned a quarter clockwise), 180 upside down, 270 bottom to top. The French is drawn in that same direction.',
       '',
       'Rules:',
@@ -487,6 +488,8 @@
     if (x1 - x0 < 6) x1 = Math.min(1000, x0 + 6);
     if (y1 - y0 < 6) y1 = Math.min(1000, y0 + 6);
     const blk = { b: [x0, y0, x1, y1].map(Math.round), o: typeof o.o === 'string' ? o.o.trim() : '', t: o.t.trim() };
+    // the reading, to say it aloud: only with Japanese to read
+    if (blk.o && typeof o.p === 'string' && o.p.trim() && JA_RE.test(blk.o)) blk.p = o.p.trim();
     // no direction given: the photo's own (most of its text runs that way)
     const r = o.r === undefined || o.r === null ? (it.turn || 0) : quarter(o.r);
     if (r) blk.r = r;
@@ -494,7 +497,11 @@
     return true;
   }
   function lensText(it) {
-    return (it.title ? it.title + '\n' : '') + (it.blocks || []).map((b) => (b.o ? b.o + ' → ' : '') + b.t).join('\n');
+    return (it.title ? it.title + '\n' : '') + (it.blocks || []).map((b) => (b.o ? withReading(b) + ' → ' : '') + b.t).join('\n');
+  }
+  // The original text and, for Japanese, its rōmaji in brackets: "牛カルビ (gyū karubi)".
+  function withReading(b) {
+    return b.o + (b.p ? ' (' + b.p + ')' : '');
   }
   function finishLens(it, pendingLine) {
     if (pendingLine && pendingLine.trim()) eatLensLine(it, pendingLine);
@@ -630,6 +637,24 @@
       } else {
         wrap.append(el('p', i === 0 ? 'lead' : 'plain', ln));
       }
+    });
+    return wrap;
+  }
+  // "Texte détecté": each block's original, with its rōmaji in the same font, then the French.
+  function foundRows(blocks) {
+    const wrap = el('div', 'rows');
+    blocks.forEach((b) => {
+      if (!b.o) { wrap.append(el('p', 'plain', b.t)); return; }
+      const r = el('div', 'row');
+      const o = el('span', 'orig', b.o);
+      o.lang = 'ja';
+      if (b.p) {
+        const p = el('span', 'reading', ' (' + b.p + ')');
+        p.lang = 'ja-Latn';
+        o.append(p);
+      }
+      r.append(o, el('span', 'trl', b.t));
+      wrap.append(r);
     });
     return wrap;
   }
@@ -815,7 +840,7 @@
     if (it.status !== 'pending' && it.blocks && it.blocks.length) {
       const d = el('details', 'found');
       d.append(el('summary', null, 'Texte détecté (' + it.blocks.length + ')'));
-      d.append(imageBody('\n' + it.blocks.map((b) => (b.o ? b.o + ' → ' : '') + b.t).join('\n')));
+      d.append(foundRows(it.blocks));
       wrap.append(d);
     }
     return wrap;
@@ -1706,7 +1731,7 @@
     const b = it.blocks && it.blocks[i];
     if (!b) return;
     sheetBlock = b;
-    $('#sheetO').textContent = b.o || '';
+    $('#sheetO').textContent = b.o ? withReading(b) : '';
     $('#sheetO').hidden = !b.o;
     $('#sheetT').textContent = b.t;
     $('#sheetSpeak').hidden = !tts || !b.o;
