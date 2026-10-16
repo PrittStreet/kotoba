@@ -41,7 +41,9 @@
     close: SV('<path d="M6 6l12 12M18 6L6 18"/>'),
     mic: SV('<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/>'),
     kbd: SV('<rect x="2.5" y="6" width="19" height="12" rx="2.2"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M8 14.2h8"/>'),
-    turn: SV('<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4.5H15"/>')
+    turn: SV('<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4.5H15"/>'),
+    camlive: SV('<path d="M4 8.5V6a2 2 0 0 1 2-2h2.5M15.5 4H18a2 2 0 0 1 2 2v2.5M20 15.5V18a2 2 0 0 1-2 2h-2.5M8.5 20H6a2 2 0 0 1-2-2v-2.5"/><path d="M8 10h8M8 14h5.5"/>'),
+    live: SV('<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4.5" height="6.5" rx="1.6"/><rect x="16.5" y="14" width="4.5" height="6.5" rx="1.6"/>')
   };
   kbdBtns.forEach((b) => { b.innerHTML = ICONS.kbd; });
   micBtns.forEach((b) => b.insertAdjacentHTML('beforeend', '<svg class="ring" aria-hidden="true"><rect pathLength="100"/></svg>'));
@@ -442,7 +444,12 @@
     return lines.join('\n');
   }
   // Photo translation drawn over the original text, Google Lens style: Claude streams one JSON block per line.
-  function lensPrompt() {
+  // px: [width, height] of the image sent. Claude counts in pixels of the image it sees (asked for
+  // 0–1000, it sometimes answered in pixels: labels too low and too far right); converted when read.
+  function lensPrompt(px) {
+    const where = px
+      ? 'b is the bounding box of the ORIGINAL text in pixels of the image as it is (not turned): the image is ' + px[0] + ' pixels wide and ' + px[1] + ' pixels high. x goes from 0 (left edge) to ' + px[0] + ' (right edge), y from 0 (top edge) to ' + px[1] + ' (bottom edge). Keep each box tight around its text.'
+      : 'b is the bounding box of the ORIGINAL text as integers from 0 to 1000 measured on the whole image as it is (not turned): x goes from the left edge (0) to the right edge (1000), y from the top edge (0) to the bottom edge (1000). Keep each box tight around its text.';
     return [
       'This photo was taken in Japan by a French speaker who cannot read Japanese.',
       'Translate the text visible in it into French, Google Lens style: each French translation will be drawn over the original text, inside the same box.',
@@ -451,9 +458,10 @@
       'Line 1: {"title": "<what the photo shows, 2 to 6 words in French>", "turn": <0, 90, 180 or 270>}',
       'turn: how far the whole photo is turned clockwise from upright, judged from most of its text. Phones often save a photo sideways (taken in landscape, or pointing down at a machine or a table). 0: the text reads normally. 90: horizontal writing runs from top to bottom (tops of the letters face right). 270: it runs from bottom to top (tops of the letters face left). 180: upside down. Japanese written vertically (縦書き) with upright characters is upright: 0.',
       'Then one line per text block, in reading order:',
-      '{"b": [x0, y0, x1, y1], "r": <0, 90, 180 or 270>, "o": "<original text>", "t": "<French translation>"}',
-      'b is the bounding box of the ORIGINAL text as integers from 0 to 1000 measured on the whole image as it is (not turned): x goes from the left edge (0) to the right edge (1000), y from the top edge (0) to the bottom edge (1000). Keep each box tight around its text.',
+      '{"b": [x0, y0, x1, y1], "r": <0, 90, 180 or 270>, "o": "<original text>", "t": "<French translation>", "p": "<rōmaji reading of the original>"}',
+      where,
       'r is the direction the original text runs in the image as it is, in degrees clockwise: 0 left to right, 90 top to bottom (vertical Japanese, or text turned a quarter clockwise), 180 upside down, 270 bottom to top. The French is drawn in that same direction.',
+      'p is the Hepburn rōmaji reading of the original Japanese, with macrons (ō, ū) and spaces between words, so that the French speaker can say it aloud (e.g. "sumibi shiage no yakiniku-don"). Leave p out when the original is not Japanese.',
       '',
       'Rules:',
       '- One block = one line of text, or one cell, label or heading that belongs together. Never merge text that is far apart.',
@@ -478,6 +486,7 @@
     let b = o.b.map(Number);
     if (b.some((v) => !isFinite(v))) return false;
     if (Math.max.apply(null, b) <= 1.001) b = b.map((v) => v * 1000);
+    else if (it.px) b = b.map((v, i) => v / it.px[i % 2] * 1000); // pixels → 0–1000
     b = b.map((v) => Math.min(1000, Math.max(0, v)));
     let [x0, y0, x1, y1] = b;
     if (x1 < x0) [x0, x1] = [x1, x0];
@@ -485,6 +494,8 @@
     if (x1 - x0 < 6) x1 = Math.min(1000, x0 + 6);
     if (y1 - y0 < 6) y1 = Math.min(1000, y0 + 6);
     const blk = { b: [x0, y0, x1, y1].map(Math.round), o: typeof o.o === 'string' ? o.o.trim() : '', t: o.t.trim() };
+    // the reading, to say it aloud: only with Japanese to read
+    if (blk.o && typeof o.p === 'string' && o.p.trim() && JA_RE.test(blk.o)) blk.p = o.p.trim();
     // no direction given: the photo's own (most of its text runs that way)
     const r = o.r === undefined || o.r === null ? (it.turn || 0) : quarter(o.r);
     if (r) blk.r = r;
@@ -492,7 +503,11 @@
     return true;
   }
   function lensText(it) {
-    return (it.title ? it.title + '\n' : '') + (it.blocks || []).map((b) => (b.o ? b.o + ' → ' : '') + b.t).join('\n');
+    return (it.title ? it.title + '\n' : '') + (it.blocks || []).map((b) => (b.o ? withReading(b) + ' → ' : '') + b.t).join('\n');
+  }
+  // The original text and, for Japanese, its rōmaji in brackets: "牛カルビ (gyū karubi)".
+  function withReading(b) {
+    return b.o + (b.p ? ' (' + b.p + ')' : '');
   }
   function finishLens(it, pendingLine) {
     if (pendingLine && pendingLine.trim()) eatLensLine(it, pendingLine);
@@ -546,9 +561,12 @@
         const data = f ? await blobToBase64(f) : it.photo.slice(it.photo.indexOf(',') + 1);
         req.model = MODEL_CAREFUL;
         req.maxTokens = 8192;
+        // the size of the picture sent: the sharp one, or after a restart the stored 1000 px one
+        const k = f ? 1 : Math.min(1, 1000 / Math.max(it.w || 1, it.h || 1));
+        it.px = it.w && it.h ? [Math.round(it.w * k), Math.round(it.h * k)] : null;
         req.content = [
           { type: 'image', source: { type: 'base64', media_type: type, data } },
-          { type: 'text', text: lensPrompt() }
+          { type: 'text', text: lensPrompt(it.px) }
         ];
         req.onText = (text, delta) => {
           it.raw = text;
@@ -628,6 +646,24 @@
       } else {
         wrap.append(el('p', i === 0 ? 'lead' : 'plain', ln));
       }
+    });
+    return wrap;
+  }
+  // "Texte détecté": each block's original, with its rōmaji in the same font, then the French.
+  function foundRows(blocks) {
+    const wrap = el('div', 'rows');
+    blocks.forEach((b) => {
+      if (!b.o) { wrap.append(el('p', 'plain', b.t)); return; }
+      const r = el('div', 'row');
+      const o = el('span', 'orig', b.o);
+      o.lang = 'ja';
+      if (b.p) {
+        const p = el('span', 'reading', ' (' + b.p + ')');
+        p.lang = 'ja-Latn';
+        o.append(p);
+      }
+      r.append(o, el('span', 'trl', b.t));
+      wrap.append(r);
     });
     return wrap;
   }
@@ -813,7 +849,7 @@
     if (it.status !== 'pending' && it.blocks && it.blocks.length) {
       const d = el('details', 'found');
       d.append(el('summary', null, 'Texte détecté (' + it.blocks.length + ')'));
-      d.append(imageBody('\n' + it.blocks.map((b) => (b.o ? b.o + ' → ' : '') + b.t).join('\n')));
+      d.append(foundRows(it.blocks));
       wrap.append(d);
     }
     return wrap;
@@ -1704,7 +1740,7 @@
     const b = it.blocks && it.blocks[i];
     if (!b) return;
     sheetBlock = b;
-    $('#sheetO').textContent = b.o || '';
+    $('#sheetO').textContent = b.o ? withReading(b) : '';
     $('#sheetO').hidden = !b.o;
     $('#sheetT').textContent = b.t;
     $('#sheetSpeak').hidden = !tts || !b.o;
@@ -1796,6 +1832,7 @@
     else if (!lensView.hidden) closeLens();
     else if (!showEl.hidden) closeShow();
     else if (!settingsEl.hidden) closeSettings();
+    else if (!liveEl.hidden) closeLive();
     else if (listening) cancelListening(); // during « Un instant… » nothing: the sentence still arrives
     else if (!confirmBar.hidden) confirmBar.hidden = true;
     else if (unfavAsk) { const a = state.items.find((i) => i.id === unfavAsk); unfavAsk = ''; if (a) updateCard(a); }
@@ -1808,6 +1845,129 @@
   // Android stops the microphone in the background: nothing more will arrive
   document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelListening(true); stopSpeaking(); } });
 
+  // ---------- Live: Japanese heard around (someone talking, announcements), translated phrase by phrase ----------
+  // The Android app does the work (LiveService), also with the screen off; this screen only shows it.
+  // Kept apart from the conversation: nothing here touches the cards, the dictation or the context.
+  const liveEl = $('#live'), liveList = $('#liveList'), liveToggle = $('#liveToggle');
+  const liveAvailable = !!(NATIVE && NATIVE.liveStart && stt);
+  let liveRunning = false, liveError = false;
+  $('#liveBtn').innerHTML = ICONS.live;
+  $('#liveClose').innerHTML = ICONS.close;
+  $('#liveBtn').hidden = !liveAvailable;
+  function livePhrase(p) {
+    if (!p || p.status === 'skip') return null; // noise: nothing to show
+    const d = el('div', 'lp ' + p.status);
+    d.dataset.id = String(p.id);
+    d.append(el('p', 'fr', p.status === 'pending' ? 'Traduction…' : p.status === 'error' ? (p.err || 'Traduction impossible.') : p.fr));
+    const ja = el('p', 'ja', p.ja);
+    ja.lang = 'ja';
+    d.append(ja);
+    return d;
+  }
+  function liveStateText(st, headphones, text) {
+    if (st === 'error') return text;
+    if (!liveRunning) return 'Arrêté.';
+    return 'J’écoute le japonais autour de toi. ' + (headphones ? 'Traduction dite dans tes écouteurs.' : 'Sans écouteurs : à l’écran seulement.');
+  }
+  function liveSync() {
+    let st = null;
+    try { st = JSON.parse(NATIVE.liveState()); } catch (e) { return; }
+    liveRunning = !!st.running;
+    liveList.textContent = '';
+    (st.phrases || []).forEach((p) => { const d = livePhrase(p); if (d) liveList.append(d); });
+    if (!liveList.childNodes.length) liveList.append(el('p', 'intro', 'Les annonces et ce qu’on te dit en japonais s’affichent ici, traduits phrase par phrase. Tu peux mettre le téléphone dans ta poche : ça continue.'));
+    $('#livePartial').textContent = st.partial || '';
+    $('#liveLog').textContent = (st.journal || []).join('\n') || 'Rien pour l’instant.';
+    $('#liveState').textContent = liveStateText('', st.headphones);
+    liveSyncToggle();
+    liveList.scrollTop = liveList.scrollHeight;
+    liveCount();
+  }
+  function liveSyncToggle() {
+    liveToggle.textContent = liveRunning ? 'Arrêter' : 'Démarrer';
+    liveToggle.classList.toggle('stop', liveRunning);
+  }
+  // Live's tokens go into the same cost estimate as the rest.
+  function liveCount() {
+    try { JSON.parse(NATIVE.liveUsage()).forEach((u) => addUsage(MODEL_QUICK, u[0], u[1])); } catch (e) {}
+  }
+  function liveStart() {
+    if (!getKey()) { openSettings('Ajoute d’abord ta clé API Claude.'); return; }
+    liveError = false;
+    $('#liveState').textContent = 'Démarrage…';
+    try { NATIVE.liveStart(getKey(), getWorkspace(), state.voice === 'male'); } catch (e) {}
+  }
+  function openLive() {
+    cancelListening(true); // the microphone goes to Live
+    stopSpeaking();
+    liveEl.hidden = false;
+    liveSync();
+    if (!liveRunning) liveStart();
+  }
+  // Closing the screen stops listening: no microphone left on without the screen saying so.
+  function closeLive() {
+    if (liveRunning) { try { NATIVE.liveStop(); } catch (e) {} }
+    liveEl.hidden = true;
+    liveCount();
+  }
+  window.kotobaLive = (ev) => {
+    if (!ev) return;
+    if (ev.type === 'state') {
+      // an error stays on screen when Live stops because of it
+      if (ev.state === 'listening') { liveRunning = true; liveError = false; }
+      if (ev.state === 'stopped') { liveRunning = false; $('#livePartial').textContent = ''; $('#liveLevel').style.width = '0'; }
+      if (ev.state === 'error') liveError = true;
+      if (!(ev.state === 'stopped' && liveError)) $('#liveState').textContent = liveStateText(ev.state, ev.headphones, ev.text);
+      liveSyncToggle();
+    } else if (ev.type === 'level') {
+      $('#liveLevel').style.width = Math.round((Number(ev.level) || 0) * 100) + '%';
+    } else if (ev.type === 'partial') {
+      $('#livePartial').textContent = ev.text || '';
+    } else if (ev.type === 'phrase' && ev.phrase) {
+      const old = liveList.querySelector('.lp[data-id="' + ev.phrase.id + '"]');
+      const d = livePhrase(ev.phrase);
+      const pin = liveList.scrollHeight - liveList.scrollTop - liveList.clientHeight < 120;
+      const intro = liveList.querySelector('.intro');
+      if (intro && d) intro.remove();
+      if (old) { if (d) old.replaceWith(d); else old.remove(); } else if (d) liveList.append(d);
+      if (ev.phrase.status === 'pending') $('#livePartial').textContent = '';
+      if (pin) liveList.scrollTop = liveList.scrollHeight;
+      if (ev.phrase.status === 'done') liveCount();
+    }
+  };
+  $('#liveBtn').addEventListener('click', openLive);
+  $('#liveJournal').addEventListener('toggle', () => { if ($('#liveJournal').open) liveSync(); });
+  $('#liveCopyLog').addEventListener('click', () => {
+    const text = $('#liveLog').textContent;
+    try { if (NATIVE.copy(text)) toast('Journal copié'); } catch (e) {}
+  });
+  $('#liveClose').addEventListener('click', closeLive);
+  liveToggle.addEventListener('click', () => { if (liveRunning) { try { NATIVE.liveStop(); } catch (e) {} } else liveStart(); });
+  // Back from the pocket (or from the notification): the screen shows what was heard meanwhile.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !liveEl.hidden) liveSync(); });
+
+  // ---------- Camera live: the Japanese the camera sees, translated in place (CameraLiveActivity) ----------
+  const camLiveBtn = $('#camLiveBtn');
+  camLiveBtn.innerHTML = ICONS.camlive;
+  camLiveBtn.hidden = !(NATIVE && NATIVE.cameraLive);
+  camLiveBtn.addEventListener('click', () => {
+    if (!getKey()) { openSettings('Ajoute d’abord ta clé API Claude.'); return; }
+    cancelListening(true);
+    stopSpeaking();
+    try { NATIVE.cameraLive(getKey(), getWorkspace()); } catch (e) {}
+  });
+  // "Photo" in the camera: the picture on screen, translated like a photo taken
+  window.kotobaPhoto = async (url) => {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(String(r.status));
+      const blob = await r.blob();
+      handlePhoto(new File([blob], 'camera.jpg', { type: 'image/jpeg' }));
+    } catch (e) { toast('Photo introuvable : réessaie.'); }
+  };
+  // back from the camera: its translations go into the cost estimate
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && NATIVE && NATIVE.liveUsage) liveCount(); });
+
   // ---------- start ----------
   load();
   try { if (NATIVE) NATIVE.voice(state.voice); } catch (e) {}
@@ -1815,4 +1975,5 @@
   syncPrefs();
   syncBanner();
   render();
+  if (liveAvailable) { try { if (JSON.parse(NATIVE.liveState()).running) { liveEl.hidden = false; liveSync(); } } catch (e) {} }
 })();

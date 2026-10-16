@@ -49,10 +49,13 @@ a{color:var(--ai)}
 .seal span{display:flex;flex-direction:column;align-items:center;gap:1px}
 .brand{display:flex;flex-direction:column;line-height:1.2;min-width:0;margin-left:2px}
 .name{font-weight:700;font-size:1.15rem;letter-spacing:.01em}
-.pair{font-size:.74rem;color:var(--muted)}
+.pair{font-size:.74rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .spacer{flex:1}
 .icon-btn{flex:none;width:42px;height:42px;border-radius:12px;display:grid;place-items:center;color:var(--muted)}
 .icon-btn svg{width:22px;height:22px}
+@media (max-width:420px){.brandrow{gap:2px}.brandrow .icon-btn{width:38px}.brand{margin:0 6px 0 8px}}
+@media (max-width:380px){.brandrow .icon-btn{width:35px}.brand{margin:0 2px 0 6px}.pair{font-size:.7rem}}
+@media (max-width:340px){.brand{display:none}}
 .icon-btn[aria-pressed="true"]{background:var(--shu-soft);color:var(--shu)}
 .icon-btn[aria-pressed="true"] svg path{fill:currentColor}
 .prefs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin-inline:-2px;padding-inline:2px}
@@ -161,6 +164,24 @@ a{color:var(--ai)}
 
 /* Settings */
 .panel{position:fixed;inset:0;z-index:25;background:var(--paper);display:flex;flex-direction:column;padding-top:var(--inset-top);padding-bottom:var(--inset-bottom)}
+/* Live: Japanese heard around, translated phrase by phrase (below Réglages, above the rest) */
+.live{z-index:22}
+.live-head{min-width:0}
+.live-head h2{margin:0}
+.live-state{margin:0;font-size:.82rem;color:var(--muted)}
+.meter{height:4px;margin-top:6px;border-radius:2px;background:var(--line);overflow:hidden;max-width:220px}
+.meter i{display:block;height:100%;width:0;background:var(--ai);transition:width .2s linear}
+.live-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding-block:16px}
+.live-list .intro{margin:auto 0}
+.lp{display:flex;flex-direction:column;gap:2px}
+.lp .fr{margin:0;font-size:1.3rem;font-weight:500;line-height:1.35}
+.lp .ja{margin:0;font-size:.85rem;color:var(--muted)}
+.lp.pending .fr{color:var(--muted)}
+.lp.error .fr{font-size:.95rem;color:var(--danger)}
+.live-foot{flex:none;display:flex;flex-direction:column;gap:10px;padding-block:10px 14px;border-top:1px solid var(--line)}
+.live-partial{margin:0;min-height:1.4em;font-size:.95rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.live-toggle{align-self:stretch;padding:14px;border-radius:14px;font-size:1.05rem;font-weight:500;background:var(--ai);color:var(--on-ai)}
+.live-toggle.stop{background:var(--danger);color:var(--on-danger)}
 .panel-bar{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding-block:8px;border-bottom:1px solid var(--line)}
 .panel-bar h2{margin:0;font-size:1.15rem}
 .panel-body{flex:1;min-height:0;overflow-y:auto;padding-block:16px 28px;display:flex;flex-direction:column;gap:14px;max-width:720px;width:100%;margin:0 auto}

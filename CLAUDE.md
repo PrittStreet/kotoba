@@ -34,9 +34,9 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
   - Pont JS `window.KotobaAndroid` (`Bridge.java`) : `canListen`,
     `startListening("fr-FR"|"ja-JP", silenceMs)`, `stopListening`, `cancelListening`,
     `keyboard("fr"|"ja", show)`, `speak(text, "fr"|"ja")`, `stopSpeaking`, `voice("female"|"male")`,
-    `voices`, `copy`, `insets`, `darkBars`, `config`, `version`. Retours vers la page : `kotobaNative.speech({type, text, code})`
+    `voices`, `copy`, `insets`, `darkBars`, `config`, `cameraLive(key, workspace)`, `version`. Retours vers la page : `kotobaNative.speech({type, text, code})`
     (`ready`, `partial`, `final`, `error`, `log`, `timer` avec `ms`), `kotobaNative.keyboard({wanted,
-    actual, ime})`, `kotobaInsets(top, bottom)`, `kotobaBack()`.
+    actual, ime})`, `kotobaInsets(top, bottom)`, `kotobaBack()`, `kotobaPhoto(url)`.
   - Micro : `SpeechRecognizer` d'Android (`SpeechInput.java`), langue imposée par le bouton :
     c'est ce qui permet de dicter en japonais sans toucher au clavier. Le recognizer coupe seul
     après ~1 s de silence : une dictée enchaîne donc plusieurs sessions, sur le même recognizer et
@@ -64,8 +64,10 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     « n » devient ん à l'envoi. Il s'active seul quand le clavier reste en alphabet côté japonais.
     Dans ce mode, `autocomplete` / `autocorrect` / `autocapitalize` = off et pas de correcteur :
     sinon le clavier « corrige » le rōmaji en mots français.
-  - Photos : `capture` → appli appareil photo via `FileProvider` (pas de permission CAMERA),
-    sinon sélecteur de photos. Les photos HEIF (« haute efficacité » des Samsung) ou de plus de
+  - Photos : `capture` → appli appareil photo via `FileProvider`, sinon sélecteur de photos.
+    Piège : la permission CAMERA (déclarée pour la Caméra live) fait refuser par Android l'appli
+    appareil photo (`SecurityException`, plantage dans WebView, que Samsung accuse ensuite) tant
+    qu'elle n'est pas accordée : `chooseFile` la demande d'abord ; refusée, la galerie s'ouvre. Les photos HEIF (« haute efficacité » des Samsung) ou de plus de
     8 Mo (50 et 200 Mpx du S23 Ultra) sont converties en JPEG d'environ 2048 px, à l'endroit
     (`Photos.java`, `ImageDecoder`).
   - Photos de travers : téléphone pointé vers le bas (machine à laver, table), l'appareil photo
@@ -77,6 +79,51 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     Android ne donne pas le genre d'une voix : il est deviné par son nom (codes des voix Google,
     `jac`/`jad`/`frb`/`frd` = homme). Sans voix d'homme installée, la voix par défaut est rendue
     plus grave (`setPitch`). Hors Android : Web Speech, même principe.
+  - Mode Live (bouton casque en haut, écran à part, voulu par Ronan sans interférence avec le
+    reste) : écoute en continu le japonais autour (annonces, quelqu'un qui lui parle) et le traduit
+    phrase par phrase en français, dit dans les écouteurs et affiché. Pas de conversation, rien dans
+    le fil ni dans le contexte. Tout tourne côté Android (`LiveService` : service au premier plan
+    « microphone », notification avec Arrêter, verrou de veille ≤ 4 h) pour marcher téléphone en
+    poche, écran éteint : `SpeechRecognizer` ja-JP en sessions enchaînées, Claude Haiku appelé en
+    Java (une phrase à la fois, 3 phrases de contexte, « - » = bruit ignoré), `TextToSpeech` fr en
+    file. Micro du téléphone, pas celui des écouteurs (mode appel, filtre les voix autour). Voix
+    seulement si des écouteurs sont branchés, sinon le micro l'entendrait. Pont : `liveStart(key,
+    workspace, male)`, `liveStop`, `liveState`, `liveUsage` ; retours `kotobaLive({type: state |
+    partial | phrase})`. Fermer l'écran Live arrête l'écoute ; rouvrir l'app pendant une session
+    affiche l'écran Live. Xiaomi (HyperOS) : régler la batterie de Kotoba sur « Aucune restriction ».
+    Sensibilité : sur Android 13+, Kotoba enregistre lui-même le micro du téléphone (`AudioRecord`,
+    jamais celui des écouteurs), relève les voix faibles ou lointaines (gain auto ≤ ×8, limiteur) et
+    passe ce son au recognizer (`EXTRA_AUDIO_SOURCE`, un tuyau par phrase). Si le recognizer ne le
+    lit pas (1,5 s) ou échoue tout de suite 3 fois, retour au micro standard. Barre de niveau et
+    journal (Copier) dans l'écran Live pour le dépannage. Avec ce son, le recognizer ne finit jamais
+    une phrase seul : Kotoba coupe (1,2 s sans mot nouveau, ou toutes les 12 s), `stopListening`, et
+    garde le son entre deux sessions (aucun mot perdu). Choix de Ronan après essai : phrase par
+    phrase en français naturel (le mot à mot en vrac par morceaux de 4 s a été écarté).
+  - Caméra live (bouton viseur en haut, `CameraLiveActivity`, écran natif à part) : le japonais filmé
+    est traduit sur place, étiquettes qui suivent le texte quand le téléphone bouge (« façon Google
+    Lens », mais traduit par Claude : voulu par Ronan). Lecture du texte sur le téléphone, hors ligne,
+    plusieurs fois par seconde (ML Kit japonais intégré à l'APK). ML Kit reçoit une image déjà
+    recadrée sur ce que montre l'aperçu et redressée (`toBitmap` RGBA, `createBitmap` + rotation,
+    `InputImage.fromBitmap(…, 0)`), puis simple mise à l'échelle vers l'écran. Ne pas lui laisser la
+    rotation (`fromMediaImage(image, rotation)` ou `MlKitAnalyzer`) : sur le Xiaomi, ses positions
+    restaient celles de l'image couchée, étiquettes tournées d'un quart de tour. Chaque ligne est suivie d'une image à l'autre
+    (`LabelsView` : même texte, ou lecture voisine et ressemblante) et son étiquette glisse vers la
+    nouvelle position. Une ligne lue sur 2 images est traduite une seule fois par Claude Haiku
+    (`Claude.java`, lignes numérotées, une requête à la fois, réponse en objet JSON `{"1": …}`,
+    « - » = bruit ; une ligne oubliée 2 fois reste sans traduction), puis gardée en mémoire (500
+    textes, aussi pour une lecture qui diffère d'une lettre). Tout en 4:3 (aperçu `FIT_CENTER` avec
+    bandes noires, lecture, photo) : même champ partout. « Photo » prend une vraie photo
+    (`IMAGE_CAPTURE`, ~12 Mpx, comme l'appli appareil photo, `cache/photos`), ferme la caméra et la
+    passe à la traduction photo habituelle. Pas de capture de l'aperçu (`getBitmap`) : image au
+    format de l'écran et moins nette, sur laquelle Claude plaçait mal ses étiquettes
+    (`kotobaPhoto('/photos/…')`, servi par `WebViewAssetLoader` ; CSP `connect-src 'self'`).
+    « Lampe » si le téléphone en a une. Permission CAMERA demandée par l'écran lui-même. Ses tokens
+    comptent dans l'estimation du coût au retour dans l'app (`liveUsage`).
+    APK limité aux processeurs ARM (`abiFilters`) : la lecture du texte pèse 11 Mo par type.
+  - WebView absent, désactivé ou qui ne démarre pas (par exemple après « Désinstaller » les mises à
+    jour d'Android System WebView sur un Samsung) : `MainActivity` affiche un écran d'aide natif
+    (Play Store, Réessayer) au lieu de planter au lancement. Pas de contrôle de version : tous les
+    fabricants ne la numérotent pas comme Chrome.
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
   - Pas de `backdrop-filter` sur les traductions des photos : sur un Samsung, elles se
@@ -120,8 +167,11 @@ anciennes aux favoris, puis les miniatures.
 
 Ce qui vient de l'artifact et doit rester : détection FR/JA, rōmaji et note de nuance
 (format `@@R` / `@@F` / `@@N`), Rapide / Soigné, Poli / Familier, Écouter, Copier, Montrer, Favoris,
-historique, photos « façon Google Lens » (une ligne JSON par bloc, `{"b":[x0,y0,x1,y1],"r":…,"o":…,"t":…}`,
-coordonnées 0–1000 sur la photo telle quelle), design (sceau 言葉, indigo 藍 + vermillon 朱, Zen Kaku Gothic New, clair/sombre).
+historique, photos « façon Google Lens » (une ligne JSON par bloc, `{"b":[x0,y0,x1,y1],"r":…,"o":…,"t":…,"p":…}`,
+`b` demandé en pixels de l'image envoyée, sa taille dans la consigne (`it.px`), converti en 0–1000
+sur la photo telle quelle à la lecture et stocké ainsi ; demandé en 0–1000, Claude répondait parfois
+en pixels : étiquettes trop bas et trop à droite ; `p` = rōmaji du japonais, affiché entre parenthèses
+après l'original dans « Texte détecté » et la fiche d'un bloc, pour le prononcer), design (sceau 言葉, indigo 藍 + vermillon 朱, Zen Kaku Gothic New, clair/sombre).
 
 ## Tester
 
