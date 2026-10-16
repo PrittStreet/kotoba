@@ -64,8 +64,10 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     « n » devient ん à l'envoi. Il s'active seul quand le clavier reste en alphabet côté japonais.
     Dans ce mode, `autocomplete` / `autocorrect` / `autocapitalize` = off et pas de correcteur :
     sinon le clavier « corrige » le rōmaji en mots français.
-  - Photos : `capture` → appli appareil photo via `FileProvider` (pas de permission CAMERA),
-    sinon sélecteur de photos. Les photos HEIF (« haute efficacité » des Samsung) ou de plus de
+  - Photos : `capture` → appli appareil photo via `FileProvider`, sinon sélecteur de photos.
+    Piège : la permission CAMERA (déclarée pour la Caméra live) fait refuser par Android l'appli
+    appareil photo (`SecurityException`, plantage dans WebView, que Samsung accuse ensuite) tant
+    qu'elle n'est pas accordée : `chooseFile` la demande d'abord ; refusée, la galerie s'ouvre. Les photos HEIF (« haute efficacité » des Samsung) ou de plus de
     8 Mo (50 et 200 Mpx du S23 Ultra) sont converties en JPEG d'environ 2048 px, à l'endroit
     (`Photos.java`, `ImageDecoder`).
   - Photos de travers : téléphone pointé vers le bas (machine à laver, table), l'appareil photo
@@ -118,9 +120,10 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     « Lampe » si le téléphone en a une. Permission CAMERA demandée par l'écran lui-même. Ses tokens
     comptent dans l'estimation du coût au retour dans l'app (`liveUsage`).
     APK limité aux processeurs ARM (`abiFilters`) : la lecture du texte pèse 11 Mo par type.
-  - WebView absent, désactivé, trop ancien (< Chrome 90) ou qui ne démarre pas (par exemple après
-    « Désinstaller » les mises à jour d'Android System WebView sur un Samsung) : `MainActivity`
-    affiche un écran d'aide natif (Play Store, Réessayer) au lieu de planter au lancement.
+  - WebView absent, désactivé ou qui ne démarre pas (par exemple après « Désinstaller » les mises à
+    jour d'Android System WebView sur un Samsung) : `MainActivity` affiche un écran d'aide natif
+    (Play Store, Réessayer) au lieu de planter au lancement. Pas de contrôle de version : tous les
+    fabricants ne la numérotent pas comme Chrome.
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
   - Pas de `backdrop-filter` sur les traductions des photos : sur un Samsung, elles se

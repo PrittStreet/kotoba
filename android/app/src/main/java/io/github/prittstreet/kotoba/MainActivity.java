@@ -63,6 +63,7 @@ public class MainActivity extends Activity implements LiveService.Listener {
     private static final int REQ_MIC = 2;
     private static final int REQ_LIVE = 3;
     private static final int REQ_CAMERA_LIVE = 4;
+    private static final int REQ_CAMERA = 5;
 
     private KotobaWebView web;
     private WebViewAssetLoader assets;
@@ -242,6 +243,16 @@ public class MainActivity extends Activity implements LiveService.Listener {
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode == REQ_CAMERA) {
+            ValueCallback<Uri[]> callback = pendingFiles;
+            pendingFiles = null;
+            if (callback == null) return;
+            boolean granted = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+            // refused: the photo can still come from the gallery
+            if (!granted) toast("Sans l’autorisation Appareil photo, choisis une photo dans la galerie.");
+            if (!openPicker(callback, granted)) callback.onReceiveValue(null);
+            return;
+        }
         if (requestCode == REQ_LIVE) {
             String[] l = pendingLive;
             pendingLive = null;
@@ -339,14 +350,26 @@ public class MainActivity extends Activity implements LiveService.Listener {
         pendingFiles = null;
         pendingPhoto = null;
         pendingPhotoUri = null;
+        // The CAMERA permission (for camera live) makes Android refuse the camera app's photo intent
+        // while it is not granted (SecurityException: the app crashed, inside WebView): asked first.
+        if (camera && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            pendingFiles = callback;
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA);
+            return true;
+        }
+        return openPicker(callback, camera);
+    }
+
+    /** The camera app or the photo picker; false (callback untouched) if neither opens. */
+    private boolean openPicker(ValueCallback<Uri[]> callback, boolean camera) {
         Intent intent = camera ? cameraIntent() : galleryIntent();
         if (intent == null) return false;
         try {
             startActivityForResult(intent, REQ_FILES);
-        } catch (ActivityNotFoundException e) {
+        } catch (ActivityNotFoundException | SecurityException e) {
             pendingPhoto = null;
             pendingPhotoUri = null;
-            toast(camera ? "Aucune appli appareil photo trouvée." : "Aucune galerie trouvée.");
+            toast(camera ? "Impossible d’ouvrir l’appareil photo." : "Aucune galerie trouvée.");
             return false;
         }
         pendingFiles = callback;
@@ -429,12 +452,10 @@ public class MainActivity extends Activity implements LiveService.Listener {
     // ---------- no WebView ----------
 
     private static final String WEBVIEW = "com.google.android.webview";
-    /** The page needs at least this Chrome version (CSS aspect-ratio for the photos). */
-    private static final int MIN_WEBVIEW = 90;
 
     /**
-     * The whole app is a page shown by Android System WebView. Missing, disabled, reset to the
-     * phone's first version ("Uninstall updates") or being updated: a clear message, not a crash.
+     * The whole app is a page shown by Android System WebView. Missing, disabled or being updated:
+     * a clear message, not a crash. (No version check: not every maker numbers it like Chrome.)
      */
     private String webViewProblem() {
         PackageInfo p;
@@ -443,12 +464,7 @@ public class MainActivity extends Activity implements LiveService.Listener {
         } catch (RuntimeException e) {
             p = null;
         }
-        if (p == null) return "Android System WebView est absent ou désactivé sur ce téléphone.";
-        String v = p.versionName == null ? "" : p.versionName;
-        int major = 0;
-        for (int i = 0; i < v.length() && Character.isDigit(v.charAt(i)); i++) major = major * 10 + (v.charAt(i) - '0');
-        if (major > 0 && major < MIN_WEBVIEW) return "Android System WebView est trop ancien sur ce téléphone (version " + v + ").";
-        return null;
+        return p == null ? "Android System WebView est absent ou désactivé sur ce téléphone." : null;
     }
 
     @SuppressLint("SetTextI18n") // the app is in French only
