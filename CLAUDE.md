@@ -94,9 +94,9 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     passe ce son au recognizer (`EXTRA_AUDIO_SOURCE`, un tuyau par phrase). Si le recognizer ne le
     lit pas (1,5 s) ou échoue tout de suite 3 fois, retour au micro standard. Barre de niveau et
     journal (Copier) dans l'écran Live pour le dépannage. Avec ce son, le recognizer ne finit jamais
-    une phrase seul : Kotoba coupe (0,7 s sans mot nouveau, ou toutes les 4 s), `stopListening`, et
-    garde le son entre deux sessions (aucun mot perdu). Voulu par Ronan : du rapide en vrac, traduit
-    morceau par morceau au plus près du mot à mot, sans compléter les phrases coupées.
+    une phrase seul : Kotoba coupe (1,2 s sans mot nouveau, ou toutes les 12 s), `stopListening`, et
+    garde le son entre deux sessions (aucun mot perdu). Choix de Ronan après essai : phrase par
+    phrase en français naturel (le mot à mot en vrac par morceaux de 4 s a été écarté).
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
   - Pas de `backdrop-filter` sur les traductions des photos : sur un Samsung, elles se

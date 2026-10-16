@@ -121,9 +121,9 @@ public class LiveService extends Service implements RecognitionListener, TextToS
     private int quickFails;
     private long levelAt;
     // Phrases are cut by Kotoba: with its own sound the recognizer may never decide a phrase is over.
-    // Live wants it fast, even rough (Ronan's choice): short pieces, translated as they come.
-    private static final long PAUSE_MS = 700;     // no new words for this long: the piece is over
-    private static final long LONGEST_MS = 4000;  // a long announcement is cut every 4 s
+    // Phrase by phrase, translated naturally (Ronan tried rough word-for-word pieces and preferred this).
+    private static final long PAUSE_MS = 1200;    // no new words for this long: the phrase is over
+    private static final long LONGEST_MS = 12000; // a very long announcement is cut every 12 s
     private static final long SILENT_MS = 30000;  // a session that heard nothing at all starts again
     private final Runnable cutIfQuiet = this::cutIfQuiet;
     private final Runnable gaveUp = this::gaveUp;
@@ -657,15 +657,14 @@ public class LiveService extends Service implements RecognitionListener, TextToS
     private static String prompt(String ja, String context) {
         return "You are the interpreter of a French speaker living in Japan. The phone's microphone just heard the Japanese below around them, "
                 + "transcribed by speech recognition: someone talking to them, an announcement in a station, train or shop, a guide…\n"
-                + "It is a piece of live speech, cut every few seconds: it may start or stop in the middle of a sentence.\n"
-                + "Translate this piece into French at once, close to word for word, short and plain: they hear it in their earphones while the speech goes on.\n\n"
+                + "Translate it into short, natural French that they will hear in their earphones.\n\n"
                 + "Rules:\n"
-                + "- Translate only what is there: do not complete the sentence, do not guess what comes next, do not repeat the pieces before.\n"
+                + "- A very long announcement may be cut in the middle: translate what is there, do not invent the rest.\n"
                 + "- Fix obvious recognition mistakes silently.\n"
                 + "- Keep station and place names in rōmaji (Shinjuku, Tōkyō), and numbers, times, platforms and prices.\n"
                 + "- If it is only noise, a filler or makes no sense, answer exactly: -\n"
                 + "- Answer with the French only: no quotes, no notes, no Markdown.\n"
-                + (context.isEmpty() ? "" : "\nPieces heard just before (context only, do not translate them again):\n" + context)
+                + (context.isEmpty() ? "" : "\nHeard just before (context only, do not translate):\n" + context)
                 + "\nHeard now:\n\"\"\"\n" + ja + "\n\"\"\"";
     }
 
