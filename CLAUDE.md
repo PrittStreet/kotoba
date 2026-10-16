@@ -109,8 +109,11 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     nouvelle position. Une ligne lue sur 2 images est traduite une seule fois par Claude Haiku
     (`Claude.java`, lignes numérotées, une requête à la fois, réponse en objet JSON `{"1": …}`,
     « - » = bruit ; une ligne oubliée 2 fois reste sans traduction), puis gardée en mémoire (500
-    textes, aussi pour une lecture qui diffère d'une lettre). « Photo » enregistre ce qui est à
-    l'écran (2048 px max, `cache/photos`), ferme la caméra et le passe à la traduction photo habituelle
+    textes, aussi pour une lecture qui diffère d'une lettre). Tout en 4:3 (aperçu `FIT_CENTER` avec
+    bandes noires, lecture, photo) : même champ partout. « Photo » prend une vraie photo
+    (`IMAGE_CAPTURE`, ~12 Mpx, comme l'appli appareil photo, `cache/photos`), ferme la caméra et la
+    passe à la traduction photo habituelle. Pas de capture de l'aperçu (`getBitmap`) : image au
+    format de l'écran et moins nette, sur laquelle Claude plaçait mal ses étiquettes
     (`kotobaPhoto('/photos/…')`, servi par `WebViewAssetLoader` ; CSP `connect-src 'self'`).
     « Lampe » si le téléphone en a une. Permission CAMERA demandée par l'écran lui-même. Ses tokens
     comptent dans l'estimation du coût au retour dans l'app (`liveUsage`).

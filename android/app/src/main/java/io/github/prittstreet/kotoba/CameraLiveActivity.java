@@ -28,9 +28,12 @@ import androidx.activity.EdgeToEdge;
 import androidx.activity.SystemBarStyle;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
 import androidx.camera.core.CameraInfo;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.core.ImageCaptureException;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.resolutionselector.AspectRatioStrategy;
 import androidx.camera.core.resolutionselector.ResolutionSelector;
@@ -54,7 +57,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.text.Normalizer;
 import java.util.ArrayList;
@@ -88,8 +90,6 @@ public class CameraLiveActivity extends ComponentActivity {
     private static final int CACHE_SIZE = 500;
     /** A line Claude skipped this many times is left untranslated. */
     private static final int MAX_TRIES = 2;
-    /** "Photo": the longest side of the picture handed to the photo translation (as the page's own photos). */
-    private static final int PHOTO_MAX = 2048;
 
     /** Translations kept between visits, by text read: "-" for noise. Main thread. */
     private static final Map<String, String> cache = new LinkedHashMap<String, String>(64, 0.75f, true) {
@@ -147,7 +147,8 @@ public class CameraLiveActivity extends ComponentActivity {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         preview = new PreviewView(this);
-        preview.setScaleType(PreviewView.ScaleType.FILL_CENTER);
+        // the whole 4:3 picture, as a photo: what is seen is what is read and what "Photo" takes
+        preview.setScaleType(PreviewView.ScaleType.FIT_CENTER);
         root.addView(preview, match());
         labels = new LabelsView(this);
         labels.setTranslations(cache::get);
@@ -237,16 +238,23 @@ public class CameraLiveActivity extends ComponentActivity {
         recognizer = TextRecognition.getClient(new JapaneseTextRecognizerOptions.Builder().build());
         controller = new LifecycleCameraController(this);
         controller.setCameraSelector(CameraSelector.DEFAULT_BACK_CAMERA);
-        controller.setEnabledUseCases(CameraController.IMAGE_ANALYSIS);
-        // a sharp enough picture for small writing, the same shape as the preview's
+        controller.setEnabledUseCases(CameraController.IMAGE_ANALYSIS | CameraController.IMAGE_CAPTURE);
+        // all in 4:3, the camera's own shape: the same field of view everywhere, and "Photo" is a
+        // real photo, as sharp as the camera app's (Claude places its labels well on those)
         controller.setPreviewResolutionSelector(new ResolutionSelector.Builder()
-                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                 .build());
         controller.setImageAnalysisResolutionSelector(new ResolutionSelector.Builder()
-                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
-                .setResolutionStrategy(new ResolutionStrategy(new Size(1920, 1080),
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(new ResolutionStrategy(new Size(1920, 1440),
                         ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
                 .build());
+        controller.setImageCaptureResolutionSelector(new ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(new ResolutionStrategy(new Size(4000, 3000),
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
+                .build());
+        controller.setImageCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY);
         // ready for a Bitmap: CameraX converts the colours itself, faster
         controller.setImageAnalysisOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888);
         controller.setImageAnalysisAnalyzer(analysis, this::analyze);
@@ -314,8 +322,8 @@ public class CameraLiveActivity extends ComponentActivity {
         if (destroyed || taking || text == null) return;
         float vw = labels.getWidth(), vh = labels.getHeight();
         if (vw <= 0 || vh <= 0 || w <= 0 || h <= 0) return;
-        // the picture fills the screen (same shape: only scaled)
-        float s = Math.max(vw / w, vh / h);
+        // the picture fits the screen, in the middle (as the preview)
+        float s = Math.min(vw / w, vh / h);
         float dx = (vw - w * s) / 2;
         float dy = (vh - h * s) / 2;
         List<LabelsView.Seen> seen = new ArrayList<>();
@@ -349,38 +357,30 @@ public class CameraLiveActivity extends ComponentActivity {
         torch.setText(on ? "Lampe ✓" : "Lampe");
     }
 
-    /** What is on screen goes to the app's photo translation, the same as a photo taken. */
+    /** A photo, as with the camera app, handed to the app's photo translation. */
     private void takePhoto() {
-        if (taking || controller == null) return;
-        Bitmap shot = preview.getBitmap();
-        if (shot == null) return; // nothing on screen yet
+        if (taking || !cameraReady || controller == null) return;
         taking = true;
         show("Photo…");
         File dir = new File(getCacheDir(), "photos");
+        //noinspection ResultOfMethodCallIgnored
+        dir.mkdirs();
         String name = "live-" + System.currentTimeMillis() + ".jpg";
-        net.execute(() -> {
-            // what Claude reads well, no more: a lighter file, faster all the way
-            float k = Math.min(1f, PHOTO_MAX / (float) Math.max(shot.getWidth(), shot.getHeight()));
-            Bitmap picture = k < 1 ? Bitmap.createScaledBitmap(shot, Math.round(shot.getWidth() * k), Math.round(shot.getHeight() * k), true) : shot;
-            boolean ok;
-            //noinspection ResultOfMethodCallIgnored
-            dir.mkdirs();
-            try (FileOutputStream out = new FileOutputStream(new File(dir, name))) {
-                ok = picture.compress(Bitmap.CompressFormat.JPEG, 88, out);
-            } catch (IOException e) {
-                ok = false;
-            }
-            boolean saved = ok;
-            main.post(() -> {
+        ImageCapture.OutputFileOptions file = new ImageCapture.OutputFileOptions.Builder(new File(dir, name)).build();
+        controller.takePicture(file, ContextCompat.getMainExecutor(this), new ImageCapture.OnImageSavedCallback() {
+            @Override
+            public void onImageSaved(@NonNull ImageCapture.OutputFileResults results) {
                 if (destroyed) return;
-                if (!saved) {
-                    taking = false;
-                    show("Photo impossible.");
-                    return;
-                }
                 setResult(RESULT_OK, new Intent().putExtra(EXTRA_PHOTO, name));
                 finish();
-            });
+            }
+
+            @Override
+            public void onError(@NonNull ImageCaptureException e) {
+                if (destroyed) return;
+                taking = false;
+                show("Photo impossible : réessaie.");
+            }
         });
     }
 
