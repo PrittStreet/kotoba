@@ -50,7 +50,9 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -118,6 +120,19 @@ public class LiveService extends Service implements RecognitionListener, TextToS
     private volatile int unread;                   // sound the recognizer did not take (20 ms pieces)
     private int quickFails;
     private long levelAt;
+    // Phrases are cut by Kotoba: with its own sound the recognizer may never decide a phrase is over.
+    // Live wants it fast, even rough (Ronan's choice): short pieces, translated as they come.
+    private static final long PAUSE_MS = 700;     // no new words for this long: the piece is over
+    private static final long LONGEST_MS = 4000;  // a long announcement is cut every 4 s
+    private static final long SILENT_MS = 30000;  // a session that heard nothing at all starts again
+    private final Runnable cutIfQuiet = this::cutIfQuiet;
+    private final Runnable gaveUp = this::gaveUp;
+    private final Runnable silentTooLong = this::silentTooLong;
+    private boolean ending;   // the phrase was cut: waiting for the recognizer's last words
+    private long phraseAt;    // when the current phrase's first words came
+    private long partialAt;   // when its last new words came
+    /** Sound recorded between two sessions, given to the next one (pump thread only). */
+    private final ArrayDeque<byte[]> backlog = new ArrayDeque<>();
 
     // ---------- called by MainActivity / Bridge ----------
 
@@ -264,6 +279,12 @@ public class LiveService extends Service implements RecognitionListener, TextToS
         if (!active) return;
         if (rec == null) create();
         partial = "";
+        ending = false;
+        phraseAt = 0;
+        main.removeCallbacks(cutIfQuiet);
+        main.removeCallbacks(gaveUp);
+        main.removeCallbacks(silentTooLong);
+        main.postDelayed(silentTooLong, SILENT_MS);
         sessionAt = SystemClock.elapsedRealtime();
         try {
             Intent i = intent;
@@ -295,6 +316,8 @@ public class LiveService extends Service implements RecognitionListener, TextToS
     @Override
     public void onResults(Bundle results) {
         if (!active) return;
+        main.removeCallbacks(gaveUp);
+        main.removeCallbacks(cutIfQuiet);
         String text = best(results);
         heard(text.isEmpty() ? partial : text);
         failures = 0;
@@ -304,9 +327,53 @@ public class LiveService extends Service implements RecognitionListener, TextToS
     @Override
     public void onPartialResults(Bundle partialResults) {
         String text = best(partialResults);
-        if (!active || text.isEmpty() || text.equals(partial)) return;
+        if (!active || ending || text.isEmpty() || text.equals(partial)) return;
         partial = text;
+        long now = SystemClock.elapsedRealtime();
+        partialAt = now;
+        if (phraseAt == 0) phraseAt = now;
         emit("partial", "text", text);
+        main.removeCallbacks(cutIfQuiet);
+        if (now - phraseAt >= LONGEST_MS) cut();
+        else main.postDelayed(cutIfQuiet, PAUSE_MS);
+    }
+
+    private void cutIfQuiet() {
+        if (active && !ending && !partial.isEmpty() && SystemClock.elapsedRealtime() - partialAt >= PAUSE_MS) cut();
+    }
+
+    /** The phrase is over: the recognizer gives its last words, a new session starts. */
+    private void cut() {
+        ending = true;
+        main.removeCallbacks(cutIfQuiet);
+        ParcelFileDescriptor o = pipeOut;
+        pipeOut = null; // end of this phrase's sound; the pump keeps what follows for the next one
+        try {
+            if (o != null) o.close();
+        } catch (IOException ignored) {
+            // already closed
+        }
+        try {
+            if (rec != null) rec.stopListening();
+        } catch (RuntimeException ignored) {
+            // the next session starts anyway
+        }
+        main.postDelayed(gaveUp, 2000);
+    }
+
+    /** The recognizer did not finish the phrase: keep what it had heard and go on. */
+    private void gaveUp() {
+        if (!active || !ending) return;
+        heard(partial);
+        if (rec != null) rec.cancel();
+        again(0);
+    }
+
+    /** Half a minute without a word: a fresh session (some recognizers stall on their own sound). */
+    private void silentTooLong() {
+        if (!active || ending || !partial.isEmpty()) return;
+        if (rec != null) rec.cancel();
+        again(0);
     }
 
     @Override
@@ -314,6 +381,13 @@ public class LiveService extends Service implements RecognitionListener, TextToS
         if (!active) return;
         boolean quick = SystemClock.elapsedRealtime() - sessionAt < SHORT_SESSION_MS;
         if (error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) note("erreur " + error);
+        main.removeCallbacks(cutIfQuiet);
+        if (ending) { // the phrase was cut: what was heard is enough
+            main.removeCallbacks(gaveUp);
+            heard(partial);
+            again(0);
+            return;
+        }
         if (boosted && quick && error != SpeechRecognizer.ERROR_NO_MATCH && ++quickFails >= 3) {
             fallBack("la reconnaissance refuse le son amplifié (erreur " + error + ")");
             return;
@@ -436,13 +510,19 @@ public class LiveService extends Service implements RecognitionListener, TextToS
             }
             level(Math.min(1f, rms * gain / 12000f));
             ParcelFileDescriptor o = pipeOut;
-            if (o == null) continue;
+            if (o == null) {
+                // between two phrases: kept (1 s at most) for the next session, so no word is lost
+                backlog.add(Arrays.copyOf(out, n * 2));
+                while (backlog.size() > 50) backlog.poll();
+                continue;
+            }
             try {
                 FileDescriptor fd = o.getFileDescriptor();
                 poll[0].fd = fd;
                 poll[0].events = (short) OsConstants.POLLOUT;
                 poll[0].revents = 0;
                 if (Os.poll(poll, 0) > 0 && (poll[0].revents & OsConstants.POLLOUT) != 0) {
+                    for (byte[] b; (b = backlog.poll()) != null; ) Os.write(fd, b, 0, b.length);
                     Os.write(fd, out, 0, n * 2);
                     unread = 0;
                 } else if (++unread == 75 && SystemClock.elapsedRealtime() - sessionAt > 1500) {
@@ -577,13 +657,15 @@ public class LiveService extends Service implements RecognitionListener, TextToS
     private static String prompt(String ja, String context) {
         return "You are the interpreter of a French speaker living in Japan. The phone's microphone just heard the Japanese below around them, "
                 + "transcribed by speech recognition: someone talking to them, an announcement in a station, train or shop, a guide…\n"
-                + "Translate it into short, natural French that they will hear in their earphones.\n\n"
+                + "It is a piece of live speech, cut every few seconds: it may start or stop in the middle of a sentence.\n"
+                + "Translate this piece into French at once, close to word for word, short and plain: they hear it in their earphones while the speech goes on.\n\n"
                 + "Rules:\n"
+                + "- Translate only what is there: do not complete the sentence, do not guess what comes next, do not repeat the pieces before.\n"
                 + "- Fix obvious recognition mistakes silently.\n"
                 + "- Keep station and place names in rōmaji (Shinjuku, Tōkyō), and numbers, times, platforms and prices.\n"
                 + "- If it is only noise, a filler or makes no sense, answer exactly: -\n"
                 + "- Answer with the French only: no quotes, no notes, no Markdown.\n"
-                + (context.isEmpty() ? "" : "\nHeard just before (context only, do not translate):\n" + context)
+                + (context.isEmpty() ? "" : "\nPieces heard just before (context only, do not translate them again):\n" + context)
                 + "\nHeard now:\n\"\"\"\n" + ja + "\n\"\"\"";
     }
 

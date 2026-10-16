@@ -1840,7 +1840,7 @@
     liveRunning = !!st.running;
     liveList.textContent = '';
     (st.phrases || []).forEach((p) => { const d = livePhrase(p); if (d) liveList.append(d); });
-    if (!liveList.childNodes.length) liveList.append(el('p', 'intro', 'Les annonces et ce qu’on te dit en japonais s’affichent ici, traduits phrase par phrase. Tu peux mettre le téléphone dans ta poche : ça continue.'));
+    if (!liveList.childNodes.length) liveList.append(el('p', 'intro', 'Les annonces et ce qu’on te dit en japonais s’affichent ici, traduits au fur et à mesure, en vrac. Tu peux mettre le téléphone dans ta poche : ça continue.'));
     $('#livePartial').textContent = st.partial || '';
     $('#liveLog').textContent = (st.journal || []).join('\n') || 'Rien pour l’instant.';
     $('#liveState').textContent = liveStateText('', st.headphones);
