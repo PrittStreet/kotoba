@@ -161,8 +161,10 @@ anciennes aux favoris, puis les miniatures.
 
 Ce qui vient de l'artifact et doit rester : détection FR/JA, rōmaji et note de nuance
 (format `@@R` / `@@F` / `@@N`), Rapide / Soigné, Poli / Familier, Écouter, Copier, Montrer, Favoris,
-historique, photos « façon Google Lens » (une ligne JSON par bloc, `{"b":[x0,y0,x1,y1],"r":…,"o":…,"p":…,"t":…}`,
-coordonnées 0–1000 sur la photo telle quelle ; `p` = rōmaji du japonais, affiché entre parenthèses
+historique, photos « façon Google Lens » (une ligne JSON par bloc, `{"b":[x0,y0,x1,y1],"r":…,"o":…,"t":…,"p":…}`,
+`b` demandé en pixels de l'image envoyée, sa taille dans la consigne (`it.px`), converti en 0–1000
+sur la photo telle quelle à la lecture et stocké ainsi ; demandé en 0–1000, Claude répondait parfois
+en pixels : étiquettes trop bas et trop à droite ; `p` = rōmaji du japonais, affiché entre parenthèses
 après l'original dans « Texte détecté » et la fiche d'un bloc, pour le prononcer), design (sceau 言葉, indigo 藍 + vermillon 朱, Zen Kaku Gothic New, clair/sombre).
 
 ## Tester

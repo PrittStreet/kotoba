@@ -444,7 +444,12 @@
     return lines.join('\n');
   }
   // Photo translation drawn over the original text, Google Lens style: Claude streams one JSON block per line.
-  function lensPrompt() {
+  // px: [width, height] of the image sent. Claude counts in pixels of the image it sees (asked for
+  // 0–1000, it sometimes answered in pixels: labels too low and too far right); converted when read.
+  function lensPrompt(px) {
+    const where = px
+      ? 'b is the bounding box of the ORIGINAL text in pixels of the image as it is (not turned): the image is ' + px[0] + ' pixels wide and ' + px[1] + ' pixels high. x goes from 0 (left edge) to ' + px[0] + ' (right edge), y from 0 (top edge) to ' + px[1] + ' (bottom edge). Keep each box tight around its text.'
+      : 'b is the bounding box of the ORIGINAL text as integers from 0 to 1000 measured on the whole image as it is (not turned): x goes from the left edge (0) to the right edge (1000), y from the top edge (0) to the bottom edge (1000). Keep each box tight around its text.';
     return [
       'This photo was taken in Japan by a French speaker who cannot read Japanese.',
       'Translate the text visible in it into French, Google Lens style: each French translation will be drawn over the original text, inside the same box.',
@@ -453,10 +458,10 @@
       'Line 1: {"title": "<what the photo shows, 2 to 6 words in French>", "turn": <0, 90, 180 or 270>}',
       'turn: how far the whole photo is turned clockwise from upright, judged from most of its text. Phones often save a photo sideways (taken in landscape, or pointing down at a machine or a table). 0: the text reads normally. 90: horizontal writing runs from top to bottom (tops of the letters face right). 270: it runs from bottom to top (tops of the letters face left). 180: upside down. Japanese written vertically (縦書き) with upright characters is upright: 0.',
       'Then one line per text block, in reading order:',
-      '{"b": [x0, y0, x1, y1], "r": <0, 90, 180 or 270>, "o": "<original text>", "p": "<rōmaji reading of the original>", "t": "<French translation>"}',
-      'b is the bounding box of the ORIGINAL text as integers from 0 to 1000 measured on the whole image as it is (not turned): x goes from the left edge (0) to the right edge (1000), y from the top edge (0) to the bottom edge (1000). Keep each box tight around its text.',
-      'p is the Hepburn rōmaji reading of the original Japanese, with macrons (ō, ū) and spaces between words, so that the French speaker can say it aloud (e.g. "sumibi shiage no yakiniku-don"). Leave p out when the original is not Japanese.',
+      '{"b": [x0, y0, x1, y1], "r": <0, 90, 180 or 270>, "o": "<original text>", "t": "<French translation>", "p": "<rōmaji reading of the original>"}',
+      where,
       'r is the direction the original text runs in the image as it is, in degrees clockwise: 0 left to right, 90 top to bottom (vertical Japanese, or text turned a quarter clockwise), 180 upside down, 270 bottom to top. The French is drawn in that same direction.',
+      'p is the Hepburn rōmaji reading of the original Japanese, with macrons (ō, ū) and spaces between words, so that the French speaker can say it aloud (e.g. "sumibi shiage no yakiniku-don"). Leave p out when the original is not Japanese.',
       '',
       'Rules:',
       '- One block = one line of text, or one cell, label or heading that belongs together. Never merge text that is far apart.',
@@ -481,6 +486,7 @@
     let b = o.b.map(Number);
     if (b.some((v) => !isFinite(v))) return false;
     if (Math.max.apply(null, b) <= 1.001) b = b.map((v) => v * 1000);
+    else if (it.px) b = b.map((v, i) => v / it.px[i % 2] * 1000); // pixels → 0–1000
     b = b.map((v) => Math.min(1000, Math.max(0, v)));
     let [x0, y0, x1, y1] = b;
     if (x1 < x0) [x0, x1] = [x1, x0];
@@ -555,9 +561,12 @@
         const data = f ? await blobToBase64(f) : it.photo.slice(it.photo.indexOf(',') + 1);
         req.model = MODEL_CAREFUL;
         req.maxTokens = 8192;
+        // the size of the picture sent: the sharp one, or after a restart the stored 1000 px one
+        const k = f ? 1 : Math.min(1, 1000 / Math.max(it.w || 1, it.h || 1));
+        it.px = it.w && it.h ? [Math.round(it.w * k), Math.round(it.h * k)] : null;
         req.content = [
           { type: 'image', source: { type: 'base64', media_type: type, data } },
-          { type: 'text', text: lensPrompt() }
+          { type: 'text', text: lensPrompt(it.px) }
         ];
         req.onText = (text, delta) => {
           it.raw = text;
