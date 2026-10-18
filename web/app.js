@@ -467,6 +467,7 @@
       '- One block = one line of text, or one cell, label or heading that belongs together. Never merge text that is far apart.',
       '- Translate every text that is not French (Japanese, English, Chinese…). Skip lone numbers, times and prices, and text already in French: they stay visible on the photo.',
       '- Keep translations short so they fit in about the same space. Write station and place names in rōmaji (e.g. Kinshichō).',
+      '- Boxes of different blocks never overlap. A paragraph of several lines is one block, its box around all of it.',
       '- At most 80 blocks. If there is more text, keep what matters most to a traveller: titles, names, headings, instructions, warnings.'
     ].join('\n');
   }
@@ -756,29 +757,115 @@
   // ---------- photo translated in place ----------
   const photoSrc = (it) => photoUrls.get(it.id) || it.photo || '';
   const ro = 'ResizeObserver' in window ? new ResizeObserver((entries) => entries.forEach((en) => fitStage(en.target))) : null;
+  // Each label: the French in the box of the original text, as big as fits. French is often longer
+  // than Japanese: when even the smallest readable size does not fit, the label grows around its box
+  // (wider first, then taller), centred on it and kept on the photo, then moves off the labels it
+  // would cover. Never cut text.
+  const OV_MIN = 9;
   function fitOv(ov) {
-    const w = ov.clientWidth, h = ov.clientHeight;
-    const span = ov.firstChild;
-    if (w < 2 || h < 2 || !span) return;
-    // Text running up or down the photo: the lines follow the box's height.
+    const layer = ov.parentNode, span = ov.firstChild, box = ov._box;
+    ov._rect = null;
+    if (!layer || !span || !box) return;
+    const LW = layer.clientWidth, LH = layer.clientHeight;
+    if (LW < 2 || LH < 2) return;
+    const x = box[0] / 1000 * LW, y = box[1] / 1000 * LH;
+    const w = Math.max(2, (box[2] - box[0]) / 1000 * LW), h = Math.max(2, (box[3] - box[1]) / 1000 * LH);
+    // text running up or down the photo: its lines follow the box's height
     const side = ov.dataset.r === '90' || ov.dataset.r === '270';
-    const room = side ? w : h;
-    if (side) span.style.width = h + 'px';
-    let size = Math.min(48, Math.max(6, room * 0.78));
-    ov.style.fontSize = size + 'px';
-    let n = 0;
-    // shrink rather than break words: stop when the text fits the box both ways
-    while ((span.scrollWidth > span.clientWidth + 1 || span.offsetHeight > room + 1) && size > 6 && n++ < 24) {
-      size = Math.max(6, size * 0.88);
+    const along = side ? h : w, across = side ? w : h;
+    span.style.overflowWrap = '';
+    const need = (size, len) => {
       ov.style.fontSize = size + 'px';
+      span.style.width = Math.max(1, len - 4) + 'px';
+      return { fits: span.scrollWidth <= span.clientWidth + 1, h: span.offsetHeight };
+    };
+    const ok = (size, len, room) => { const m = need(size, len); return m.fits && m.h <= room + 1; };
+    let size = Math.min(48, Math.max(OV_MIN, across * 0.78));
+    let len = along, room = across;
+    if (!ok(size, along, across)) {
+      if (ok(OV_MIN, along, across)) {
+        // the largest size that fits: a few halvings
+        let lo = OV_MIN, hi = size;
+        for (let i = 0; i < 6; i++) { const mid = (lo + hi) / 2; if (ok(mid, along, across)) lo = mid; else hi = mid; }
+        size = lo;
+      } else {
+        // grow: wider first (rows of text are side by side less often than one above the other)
+        size = OV_MIN;
+        const maxLen = Math.max(along, (side ? LH : LW) * 0.92);
+        // as many lines as the box holds, at least one: a box thinner than a line takes one line
+        const target = Math.max(across, need(size, 100000).h) + 1;
+        let best = null;
+        for (const f of [1, 1.25, 1.5, 2, 2.5, 3, 4]) {
+          const l = Math.min(maxLen, along * f);
+          const m = need(size, l);
+          if (m.fits && (best === null || m.h <= target)) best = { l, h: m.h };
+          if (m.fits && m.h <= target) break;
+          if (l >= maxLen) break;
+        }
+        if (!best) {
+          span.style.overflowWrap = 'anywhere'; // a word longer than the photo is wide
+          best = { l: maxLen, h: need(size, maxLen).h };
+        }
+        len = best.l;
+        room = Math.max(across, best.h + 2);
+      }
     }
+    need(size, len);
+    // the label's box, centred on the text's, kept on the photo
+    const rw = side ? room : len, rh = side ? len : room;
+    const cx = x + w / 2, cy = y + h / 2;
+    const rx = Math.min(Math.max(0, cx - rw / 2), Math.max(0, LW - rw));
+    const ry = Math.min(Math.max(0, cy - rh / 2), Math.max(0, LH - rh));
+    ov._grown = rw > w + 1 || rh > h + 1;
+    ov._rect = { x: rx, y: ry, w: rw, h: rh, side };
+    placeOv(ov, LW, LH);
   }
-  function fitStage(st) { st.querySelectorAll('.ov').forEach(fitOv); }
+  function placeOv(ov, LW, LH) {
+    const r = ov._rect;
+    ov.style.left = r.x / LW * 100 + '%';
+    ov.style.top = r.y / LH * 100 + '%';
+    ov.style.width = r.w / LW * 100 + '%';
+    ov.style.height = r.h / LH * 100 + '%';
+  }
+  // Grown labels move off the labels they cover, if they can: the smallest step sideways or up/down.
+  function untangle(ovs) {
+    const layer = ovs[0] && ovs[0].parentNode;
+    if (!layer) return;
+    const LW = layer.clientWidth, LH = layer.clientHeight;
+    const hit = (q, p) => q.x < p.x + p.w - 1 && p.x < q.x + q.w - 1 && q.y < p.y + p.h - 1 && p.y < q.y + q.h - 1;
+    const placed = ovs.filter((o) => o._rect && !o._grown).map((o) => o._rect);
+    ovs.filter((o) => o._rect && o._grown).forEach((o) => {
+      const r = o._rect;
+      const others = placed.filter((p) => hit(r, p));
+      if (others.length) {
+        // along the lines: up to half the label; across them: up to a little more than its height
+        const reach = { x: r.w * (r.side ? 1.2 : 0.5), y: r.h * (r.side ? 0.5 : 1.2) };
+        const moves = [];
+        others.forEach((p) => {
+          moves.push(['x', p.x + p.w - r.x], ['x', p.x - (r.x + r.w)], ['y', p.y + p.h - r.y], ['y', p.y - (r.y + r.h)]);
+        });
+        moves.sort((a, b) => Math.abs(a[1]) - Math.abs(b[1]));
+        for (const [k, d] of moves) {
+          if (Math.abs(d) > reach[k]) continue;
+          const q = Object.assign({}, r, { [k]: r[k] + d });
+          if (q.x < 0 || q.y < 0 || q.x + q.w > LW + 0.5 || q.y + q.h > LH + 0.5) continue;
+          if (!placed.some((p) => hit(q, p))) { o._rect = q; placeOv(o, LW, LH); break; }
+        }
+      }
+      placed.push(o._rect);
+    });
+  }
+  function fitStage(st) {
+    const ovs = [...st.querySelectorAll('.ov')];
+    ovs.forEach(fitOv);
+    untangle(ovs);
+  }
   function ovEl(b, i) {
     const ov = el('button', 'ov');
     ov.type = 'button';
     ov.dataset.act = 'block';
     ov.dataset.bi = String(i);
+    ov._box = b.b;
     ov.style.left = b.b[0] / 10 + '%';
     ov.style.top = b.b[1] / 10 + '%';
     ov.style.width = (b.b[2] - b.b[0]) / 10 + '%';
@@ -866,6 +953,7 @@
       layer.append(ov);
       fitOv(ov);
     }
+    untangle([...layer.children]);
     const st = card.querySelector('.lensbar .status');
     if (st) st.textContent = lensStatus(it);
     const t = card.querySelector('.ptitle');

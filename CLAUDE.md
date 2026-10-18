@@ -126,6 +126,12 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     fabricants ne la numérotent pas comme Chrome.
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
+  - Étiquettes des photos (`fitOv`, `untangle`) : le français dans la zone du texte d'origine, aussi
+    grand que possible ; s'il ne tient pas à 9 px (`OV_MIN`, le français est plus long que le
+    japonais), l'étiquette s'agrandit autour de sa zone, en largeur d'abord (une zone plus fine
+    qu'une ligne garde une ligne), centrée et dans la photo, puis se décale du plus petit pas
+    (côté ou haut/bas) pour ne pas couvrir ses voisines. Jamais de texte coupé. Testé aux largeurs
+    du Pixel 9a, du S23 Ultra et du Xiaomi 17T Pro.
   - Pas de `backdrop-filter` sur les traductions des photos : sur un Samsung, elles se
     décalaient de la photo quand on faisait défiler pendant la traduction (calques GPU).
   - Taille du texte : la WebView suit la police système, plafonnée à 120 % (`setTextZoom`) ;
