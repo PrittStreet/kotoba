@@ -460,13 +460,14 @@
       'Then one line per text block, in reading order:',
       '{"b": [x0, y0, x1, y1], "r": <0, 90, 180 or 270>, "o": "<original text>", "t": "<French translation>", "p": "<rōmaji reading of the original>"}',
       where,
-      'r is the direction the original text runs in the image as it is, in degrees clockwise: 0 left to right, 90 top to bottom (vertical Japanese, or text turned a quarter clockwise), 180 upside down, 270 bottom to top. The French is drawn in that same direction.',
+      'r is how far the ORIGINAL characters are turned clockwise in the image as it is: 0 when they stand upright, including Japanese written vertically (縦書き, columns read top to bottom); 90 when the text is turned a quarter clockwise (tops of the letters face right), 180 upside down, 270 turned a quarter counter-clockwise (tops face left). The French is drawn turned the same way, so upright vertical Japanese gets upright French.',
       'p is the Hepburn rōmaji reading of the original Japanese, with macrons (ō, ū) and spaces between words, so that the French speaker can say it aloud (e.g. "sumibi shiage no yakiniku-don"). Leave p out when the original is not Japanese.',
       '',
       'Rules:',
-      '- One block = one line of text as laid out on the photo, or one heading, label or cell. In a list or a menu, each item is its own block: never merge several items or lines into one block.',
+      '- One block = one sign, heading, label, cell or list item, or one piece of running text: a sentence or a notice that goes on over several lines or vertical columns is ONE block, its box around all of it. Separate items are separate blocks: never merge several dishes, entries or signs into one block.',
       '- A menu or price-list item with its dots and price is one block whose box spans the whole line, price included; end its translation with the price (e.g. "Soba froides ¥650").',
       '- Translate every text that is not French (Japanese, English, Chinese…). Skip lone numbers, times and prices that stand apart, and text already in French: they stay visible on the photo.',
+      '- On bilingual signs, skip the English or rōmaji line that only repeats the Japanese next to it: translate the Japanese once.',
       '- Keep translations short so they fit in about the same space. Write station and place names in rōmaji (e.g. Kinshichō).',
       '- Boxes of different blocks never overlap.',
       '- At most 80 blocks. If there is more text, keep what matters most to a traveller: titles, names, headings, instructions, warnings.'
@@ -765,7 +766,7 @@
   // touch and in "Texte détecté"). Never a line cut through.
   const OV_MIN = 6;
   // a label may stand out of its line by this much: list items keep their place
-  const OV_SLACK = 1.25;
+  const OV_SLACK = 1.15;
   function fitOv(ov) {
     const layer = ov.parentNode, span = ov.firstChild, box = ov._box;
     ov._rect = null;
@@ -787,16 +788,20 @@
     };
     const ok = (size, len, room) => { const m = need(size, len); return m.fits && m.h <= room * OV_SLACK + 1; };
     let size = Math.min(48, Math.max(OV_MIN, across * 0.78));
+    // not smaller than half the size of the original letters: rather a little wider (a short name
+    // in big letters, 月島 → Tsukishima, stays readable)
+    // (12 px at most: a tall box of several lines must not force big letters)
+    const floor = Math.max(OV_MIN, Math.min(size * 0.5, 12));
     let len = along, room = across;
     if (!ok(size, along, across)) {
-      if (ok(OV_MIN, along, across)) {
+      if (ok(floor, along, across)) {
         // the largest size that fits: a few halvings
-        let lo = OV_MIN, hi = size;
+        let lo = floor, hi = size;
         for (let i = 0; i < 6; i++) { const mid = (lo + hi) / 2; if (ok(mid, along, across)) lo = mid; else hi = mid; }
         size = lo;
       } else {
         // grow: wider first (rows of text are side by side less often than one above the other)
-        size = OV_MIN;
+        size = floor;
         const maxLen = Math.min(Math.max(along, (side ? LH : LW) * 0.92), along * 2.5);
         const line = need(size, 100000).h;
         // as many lines as the box holds, at least one: a box thinner than a line takes one line
@@ -810,8 +815,14 @@
           if (l >= maxLen) break;
         }
         if (!best) {
-          span.style.overflowWrap = 'anywhere'; // a word longer than the room it may take
-          best = { l: maxLen, h: need(size, maxLen).h };
+          // a word longer than that room: as wide as the word, never broken inside it
+          need(size, 1);
+          const word = span.scrollWidth + 10;
+          if (word <= (side ? LH : LW) * 0.92) best = { l: word, h: need(size, word).h };
+          else {
+            span.style.overflowWrap = 'anywhere';
+            best = { l: maxLen, h: need(size, maxLen).h };
+          }
         }
         len = best.l;
         // at most two lines more than the box holds: beyond, the text ends with "…"

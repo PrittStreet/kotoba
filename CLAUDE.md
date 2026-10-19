@@ -127,15 +127,21 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
   - Étiquettes des photos (`fitOv`, `untangle`) : le français dans la zone du texte d'origine, aussi
-    grand que possible, jusqu'à 6 px (`OV_MIN`), un peu plus haut que sa ligne au besoin
-    (`OV_SLACK` 1,25 : une liste garde ses lignes en place). Sinon l'étiquette s'agrandit autour de
-    sa zone (largeur jusqu'à ×2,5 d'abord, puis deux lignes), centrée et dans la photo ; au-delà, « … »
-    en fin de dernière ligne (texte entier au toucher et dans « Texte détecté »). Une étiquette
-    agrandie qui couvre vraiment une voisine (> 15 % de sa surface) se décale du plus petit pas.
-    Jamais de ligne coupée. Consigne : une ligne = un bloc, un plat de menu avec ses points et son prix
-    = un bloc sur toute la ligne, prix à la fin de la traduction ; jamais plusieurs plats dans un bloc
-    (« un paragraphe = un bloc » avait fait regrouper des listes entières). Vérifié sur le menu
-    Wakamurasaki de Ronan (réponse réelle de Claude rejouée) aux largeurs Pixel 9a, S23 Ultra, Xiaomi.
+    grand que possible, sans descendre sous la moitié de la taille des caractères d'origine (plancher
+    plafonné à 12 px, minimum absolu 6 px, `OV_MIN`), un peu plus haut que sa ligne au besoin
+    (`OV_SLACK` 1,15 : une liste garde ses lignes en place). Sinon l'étiquette s'agrandit autour de sa
+    zone (largeur jusqu'à ×2,5, jamais un mot coupé, puis deux lignes), centrée et dans la photo ;
+    au-delà, « … » (texte entier au toucher et dans « Texte détecté »). Une étiquette agrandie qui
+    couvre vraiment une voisine (> 15 % de sa surface) se décale du plus petit pas.
+    Consigne : un panneau, titre, case ou élément de liste = un bloc ; un plat avec ses points et son
+    prix = un bloc sur toute la ligne, prix à la fin ; une phrase ou un avis sur plusieurs lignes ou
+    colonnes = UN bloc ; jamais plusieurs plats ou panneaux dans un bloc. `r` = rotation des
+    caractères : le japonais vertical (縦書き, caractères droits) a r = 0, donc un français droit, lisible
+    sans pencher la tête. Panneaux bilingues : la ligne anglaise ou rōmaji qui répète le japonais est
+    ignorée. Banc d'essai (octobre 2026) : 15 images réelles (menus, tableaux de départs, tarifs,
+    panneaux, affiches manuscrites, texte vertical) traduites par le vrai Claude, réponses rejouées
+    aux largeurs Pixel 9a, S23 Ultra, Xiaomi 17T Pro. Limite connue : un texte très petit ou flou
+    (menu manuscrit lointain) n'est pas lu, il faut s'approcher.
   - Pas de `backdrop-filter` sur les traductions des photos : sur un Samsung, elles se
     décalaient de la photo quand on faisait défiler pendant la traduction (calques GPU).
   - Taille du texte : la WebView suit la police système, plafonnée à 120 % (`setTextZoom`) ;
