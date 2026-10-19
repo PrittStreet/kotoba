@@ -127,11 +127,15 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
   - Plein écran bord à bord : la page dessine sous les barres système et s'en écarte avec
     `--inset-top` / `--inset-bottom` ; le clavier réduit la WebView.
   - Étiquettes des photos (`fitOv`, `untangle`) : le français dans la zone du texte d'origine, aussi
-    grand que possible ; s'il ne tient pas à 9 px (`OV_MIN`, le français est plus long que le
-    japonais), l'étiquette s'agrandit autour de sa zone, en largeur d'abord (une zone plus fine
-    qu'une ligne garde une ligne), centrée et dans la photo, puis se décale du plus petit pas
-    (côté ou haut/bas) pour ne pas couvrir ses voisines. Jamais de texte coupé. Testé aux largeurs
-    du Pixel 9a, du S23 Ultra et du Xiaomi 17T Pro.
+    grand que possible, jusqu'à 6 px (`OV_MIN`), un peu plus haut que sa ligne au besoin
+    (`OV_SLACK` 1,25 : une liste garde ses lignes en place). Sinon l'étiquette s'agrandit autour de
+    sa zone (largeur jusqu'à ×2,5 d'abord, puis deux lignes), centrée et dans la photo ; au-delà, « … »
+    en fin de dernière ligne (texte entier au toucher et dans « Texte détecté »). Une étiquette
+    agrandie qui couvre vraiment une voisine (> 15 % de sa surface) se décale du plus petit pas.
+    Jamais de ligne coupée. Consigne : une ligne = un bloc, un plat de menu avec ses points et son prix
+    = un bloc sur toute la ligne, prix à la fin de la traduction ; jamais plusieurs plats dans un bloc
+    (« un paragraphe = un bloc » avait fait regrouper des listes entières). Vérifié sur le menu
+    Wakamurasaki de Ronan (réponse réelle de Claude rejouée) aux largeurs Pixel 9a, S23 Ultra, Xiaomi.
   - Pas de `backdrop-filter` sur les traductions des photos : sur un Samsung, elles se
     décalaient de la photo quand on faisait défiler pendant la traduction (calques GPU).
   - Taille du texte : la WebView suit la police système, plafonnée à 120 % (`setTextZoom`) ;

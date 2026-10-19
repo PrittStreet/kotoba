@@ -464,10 +464,11 @@
       'p is the Hepburn rōmaji reading of the original Japanese, with macrons (ō, ū) and spaces between words, so that the French speaker can say it aloud (e.g. "sumibi shiage no yakiniku-don"). Leave p out when the original is not Japanese.',
       '',
       'Rules:',
-      '- One block = one line of text, or one cell, label or heading that belongs together. Never merge text that is far apart.',
-      '- Translate every text that is not French (Japanese, English, Chinese…). Skip lone numbers, times and prices, and text already in French: they stay visible on the photo.',
+      '- One block = one line of text as laid out on the photo, or one heading, label or cell. In a list or a menu, each item is its own block: never merge several items or lines into one block.',
+      '- A menu or price-list item with its dots and price is one block whose box spans the whole line, price included; end its translation with the price (e.g. "Soba froides ¥650").',
+      '- Translate every text that is not French (Japanese, English, Chinese…). Skip lone numbers, times and prices that stand apart, and text already in French: they stay visible on the photo.',
       '- Keep translations short so they fit in about the same space. Write station and place names in rōmaji (e.g. Kinshichō).',
-      '- Boxes of different blocks never overlap. A paragraph of several lines is one block, its box around all of it.',
+      '- Boxes of different blocks never overlap.',
       '- At most 80 blocks. If there is more text, keep what matters most to a traveller: titles, names, headings, instructions, warnings.'
     ].join('\n');
   }
@@ -758,10 +759,13 @@
   const photoSrc = (it) => photoUrls.get(it.id) || it.photo || '';
   const ro = 'ResizeObserver' in window ? new ResizeObserver((entries) => entries.forEach((en) => fitStage(en.target))) : null;
   // Each label: the French in the box of the original text, as big as fits. French is often longer
-  // than Japanese: when even the smallest readable size does not fit, the label grows around its box
-  // (wider first, then taller), centred on it and kept on the photo, then moves off the labels it
-  // would cover. Never cut text.
-  const OV_MIN = 9;
+  // than Japanese: when even the smallest size does not fit, the label grows a little around its box
+  // (wider first, up to 2.5 times, then up to two lines), centred on it and kept on the photo, then
+  // moves off the labels it would cover. Still too long: its last line ends with "…" (whole text on
+  // touch and in "Texte détecté"). Never a line cut through.
+  const OV_MIN = 6;
+  // a label may stand out of its line by this much: list items keep their place
+  const OV_SLACK = 1.25;
   function fitOv(ov) {
     const layer = ov.parentNode, span = ov.firstChild, box = ov._box;
     ov._rect = null;
@@ -774,12 +778,14 @@
     const side = ov.dataset.r === '90' || ov.dataset.r === '270';
     const along = side ? h : w, across = side ? w : h;
     span.style.overflowWrap = '';
+    span.classList.remove('clamp');
+    span.style.webkitLineClamp = '';
     const need = (size, len) => {
       ov.style.fontSize = size + 'px';
       span.style.width = Math.max(1, len - 4) + 'px';
       return { fits: span.scrollWidth <= span.clientWidth + 1, h: span.offsetHeight };
     };
-    const ok = (size, len, room) => { const m = need(size, len); return m.fits && m.h <= room + 1; };
+    const ok = (size, len, room) => { const m = need(size, len); return m.fits && m.h <= room * OV_SLACK + 1; };
     let size = Math.min(48, Math.max(OV_MIN, across * 0.78));
     let len = along, room = across;
     if (!ok(size, along, across)) {
@@ -791,11 +797,12 @@
       } else {
         // grow: wider first (rows of text are side by side less often than one above the other)
         size = OV_MIN;
-        const maxLen = Math.max(along, (side ? LH : LW) * 0.92);
+        const maxLen = Math.min(Math.max(along, (side ? LH : LW) * 0.92), along * 2.5);
+        const line = need(size, 100000).h;
         // as many lines as the box holds, at least one: a box thinner than a line takes one line
-        const target = Math.max(across, need(size, 100000).h) + 1;
+        const target = Math.max(across * OV_SLACK, line) + 1;
         let best = null;
-        for (const f of [1, 1.25, 1.5, 2, 2.5, 3, 4]) {
+        for (const f of [1, 1.25, 1.5, 2, 2.5]) {
           const l = Math.min(maxLen, along * f);
           const m = need(size, l);
           if (m.fits && (best === null || m.h <= target)) best = { l, h: m.h };
@@ -803,20 +810,28 @@
           if (l >= maxLen) break;
         }
         if (!best) {
-          span.style.overflowWrap = 'anywhere'; // a word longer than the photo is wide
+          span.style.overflowWrap = 'anywhere'; // a word longer than the room it may take
           best = { l: maxLen, h: need(size, maxLen).h };
         }
         len = best.l;
+        // at most two lines more than the box holds: beyond, the text ends with "…"
+        const lines = Math.max(1, Math.floor((across + 1) / line)) + 1;
+        if (best.h > lines * line + 1) {
+          span.classList.add('clamp');
+          span.style.webkitLineClamp = String(lines);
+          best.h = need(size, len).h;
+        }
         room = Math.max(across, best.h + 2);
       }
     }
-    need(size, len);
+    // the label as tall as its text (a little more than its line at most, or grown)
+    room = Math.max(room, need(size, len).h + 1);
     // the label's box, centred on the text's, kept on the photo
     const rw = side ? room : len, rh = side ? len : room;
     const cx = x + w / 2, cy = y + h / 2;
     const rx = Math.min(Math.max(0, cx - rw / 2), Math.max(0, LW - rw));
     const ry = Math.min(Math.max(0, cy - rh / 2), Math.max(0, LH - rh));
-    ov._grown = rw > w + 1 || rh > h + 1;
+    ov._grown = side ? rw > w * OV_SLACK + 1 || rh > h + 1 : rw > w + 1 || rh > h * OV_SLACK + 1;
     ov._rect = { x: rx, y: ry, w: rw, h: rh, side };
     placeOv(ov, LW, LH);
   }
@@ -832,14 +847,18 @@
     const layer = ovs[0] && ovs[0].parentNode;
     if (!layer) return;
     const LW = layer.clientWidth, LH = layer.clientHeight;
-    const hit = (q, p) => q.x < p.x + p.w - 1 && p.x < q.x + q.w - 1 && q.y < p.y + p.h - 1 && p.y < q.y + q.h - 1;
+    // covering a little of a neighbour (an edge, a margin) is fine: only real overlaps count
+    const hit = (q, p) => {
+      const ox = Math.min(q.x + q.w, p.x + p.w) - Math.max(q.x, p.x), oy = Math.min(q.y + q.h, p.y + p.h) - Math.max(q.y, p.y);
+      return ox > 1 && oy > 1 && ox * oy > 0.15 * Math.min(q.w * q.h, p.w * p.h);
+    };
     const placed = ovs.filter((o) => o._rect && !o._grown).map((o) => o._rect);
     ovs.filter((o) => o._rect && o._grown).forEach((o) => {
       const r = o._rect;
       const others = placed.filter((p) => hit(r, p));
       if (others.length) {
-        // along the lines: up to half the label; across them: up to a little more than its height
-        const reach = { x: r.w * (r.side ? 1.2 : 0.5), y: r.h * (r.side ? 0.5 : 1.2) };
+        // along the lines: up to half the label; across them: up to its height
+        const reach = { x: r.w * (r.side ? 1 : 0.5), y: r.h * (r.side ? 0.5 : 1) };
         const moves = [];
         others.forEach((p) => {
           moves.push(['x', p.x + p.w - r.x], ['x', p.x - (r.x + r.w)], ['y', p.y + p.h - r.y], ['y', p.y - (r.y + r.h)]);

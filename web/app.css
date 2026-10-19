@@ -223,6 +223,7 @@ a{color:var(--ai)}
 .stage.orig .layer{opacity:0;pointer-events:none}
 .ov{position:absolute;display:flex;align-items:center;justify-content:center;padding:0 2px;background:var(--ov-bg);color:var(--ov-fg);border-radius:3px;box-shadow:0 0 0 1px var(--ov-edge);font-family:var(--f-ui);font-weight:500;line-height:1.08;text-align:center;overflow:hidden}
 .ov span{display:block;flex:none;width:100%;overflow-wrap:normal;word-break:normal}
+.ov span.clamp{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}
 .ov:focus-visible{outline:2px solid var(--shu);outline-offset:1px}
 .stage.scan::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--ai);box-shadow:0 0 14px 3px var(--ai);animation:scan 1.8s ease-in-out infinite alternate}
 @keyframes scan{from{top:0}to{top:calc(100% - 3px)}}
