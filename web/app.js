@@ -468,6 +468,8 @@
       '- A menu or price-list item with its dots and price is one block whose box spans the whole line, price included; end its translation with the price (e.g. "Soba froides ¥650").',
       '- Translate every text that is not French (Japanese, English, Chinese…). Skip lone numbers, times and prices that stand apart, and text already in French: they stay visible on the photo.',
       '- On bilingual signs, skip the English or rōmaji line that only repeats the Japanese next to it: translate the Japanese once.',
+      '- A traffic or safety sign whose meaning comes from its symbol and its words together: give that meaning, not just the words (e.g. 原付 under a crossed-out two-step turn: "Cyclomoteurs : virage à droite en deux temps interdit").',
+      '- A medicine, food or product name: add what it is in brackets, in a few words, when you know it (e.g. "Anelon (contre le mal des transports)").',
       '- Keep translations short so they fit in about the same space. Write station and place names in rōmaji (e.g. Kinshichō).',
       '- Boxes of different blocks never overlap.',
       '- At most 80 blocks. If there is more text, keep what matters most to a traveller: titles, names, headings, instructions, warnings.'
@@ -788,10 +790,11 @@
     };
     const ok = (size, len, room) => { const m = need(size, len); return m.fits && m.h <= room * OV_SLACK + 1; };
     let size = Math.min(48, Math.max(OV_MIN, across * 0.78));
-    // not smaller than half the size of the original letters: rather a little wider (a short name
-    // in big letters, 月島 → Tsukishima, stays readable)
-    // (12 px at most: a tall box of several lines must not force big letters)
-    const floor = Math.max(OV_MIN, Math.min(size * 0.5, 12));
+    // The original letters' size: the box's height for one line, smaller for a paragraph (the box
+    // shared by its characters, square in Japanese). Not smaller than 40 % of it: rather a little
+    // wider (a short name in big letters, 月島 → Tsukishima, stays readable); 12 px at most.
+    const letter = Math.min(across, Math.sqrt(along * across / Math.max(1, ov._chars || 1)));
+    const floor = Math.max(OV_MIN, Math.min(letter * 0.4, 12));
     let len = along, room = across;
     if (!ok(size, along, across)) {
       if (ok(floor, along, across)) {
@@ -896,6 +899,8 @@
     ov.dataset.act = 'block';
     ov.dataset.bi = String(i);
     ov._box = b.b;
+    // characters of the original: Japanese ones count whole, Latin letters and digits about half
+    ov._chars = [...(b.o || '')].reduce((n, c) => n + (/\s/.test(c) ? 0 : JA_RE.test(c) ? 1 : 0.55), 0);
     ov.style.left = b.b[0] / 10 + '%';
     ov.style.top = b.b[1] / 10 + '%';
     ov.style.width = (b.b[2] - b.b[0]) / 10 + '%';
