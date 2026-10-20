@@ -86,7 +86,9 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     « microphone », notification avec Arrêter, verrou de veille ≤ 4 h) pour marcher téléphone en
     poche, écran éteint : `SpeechRecognizer` ja-JP en sessions enchaînées, Claude Haiku appelé en
     Java (une phrase à la fois, 3 phrases de contexte, « - » = bruit ignoré), `TextToSpeech` fr en
-    file. Micro du téléphone, pas celui des écouteurs (mode appel, filtre les voix autour). Voix
+    file. `Claude.java` (Live et Caméra live) envoie `thinking: disabled` : sur une phrase difficile
+    (dialogue de théâtre), Haiku réfléchissait jusqu'à `max_tokens` et ne répondait rien, phrase
+    perdue comme du bruit, après 3 s. Micro du téléphone, pas celui des écouteurs (mode appel, filtre les voix autour). Voix
     seulement si des écouteurs sont branchés, sinon le micro l'entendrait. Pont : `liveStart(key,
     workspace, male)`, `liveStop`, `liveState`, `liveUsage` ; retours `kotobaLive({type: state |
     partial | phrase})`. Fermer l'écran Live arrête l'écoute ; rouvrir l'app pendant une session

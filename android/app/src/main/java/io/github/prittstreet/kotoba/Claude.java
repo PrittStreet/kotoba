@@ -36,6 +36,9 @@ final class Claude {
                 .put("model", QUICK)
                 .put("max_tokens", maxTokens)
                 .put("output_config", new JSONObject().put("effort", "low"))
+                // no thinking: on a hard phrase Haiku could spend all of max_tokens on it (no answer,
+                // the phrase lost as noise), and the answer must come within a second
+                .put("thinking", new JSONObject().put("type", "disabled"))
                 .put("messages", new JSONArray().put(new JSONObject().put("role", "user").put("content", prompt)));
         HttpURLConnection c = (HttpURLConnection) new URL("https://api.anthropic.com/v1/messages").openConnection();
         try {
