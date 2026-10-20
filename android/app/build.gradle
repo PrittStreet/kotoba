@@ -24,6 +24,10 @@ android {
         versionName "1.0 (${buildDate})"
         buildConfigField 'String', 'API_KEY', "\"${secrets.getProperty('apiKey', '').trim()}\""
         buildConfigField 'String', 'WORKSPACE', "\"${secrets.getProperty('workspace', '').trim()}\""
+        // phones only: the text recognition's native code is 11 MB per processor type
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
     }
 
     buildFeatures {
@@ -59,6 +63,13 @@ android {
         }
     }
 
+    // native code compressed in the APK: a smaller download
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -68,4 +79,10 @@ android {
 dependencies {
     implementation 'androidx.core:core:1.17.0'
     implementation 'androidx.webkit:webkit:1.17.1'
+    // camera live: the camera, and the Japanese read on the phone itself (offline model in the APK)
+    implementation 'androidx.activity:activity:1.13.0'
+    implementation 'androidx.camera:camera-camera2:1.6.2'
+    implementation 'androidx.camera:camera-lifecycle:1.6.2'
+    implementation 'androidx.camera:camera-view:1.6.2'
+    implementation 'com.google.mlkit:text-recognition-japanese:16.0.1'
 }

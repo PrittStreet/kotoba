@@ -7,6 +7,7 @@ import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.net.Uri;
@@ -15,6 +16,8 @@ import android.os.Bundle;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.speech.SpeechRecognizer;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
 import android.view.inputmethod.InputMethodSubtype;
@@ -26,7 +29,10 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 import android.window.OnBackInvokedDispatcher;
 
@@ -37,6 +43,7 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.webkit.WebViewAssetLoader;
+import androidx.webkit.WebViewCompat;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -49,11 +56,14 @@ import java.util.Locale;
  * Kotoba: the web app from /web shown full screen, plus what a web page can't do well on Android:
  * a microphone per language, voices, the camera and the clipboard (see Bridge).
  */
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements LiveService.Listener {
     private static final String HOST = "appassets.androidplatform.net";
     private static final String START_URL = "https://" + HOST + "/assets/index.html";
     private static final int REQ_FILES = 1;
     private static final int REQ_MIC = 2;
+    private static final int REQ_LIVE = 3;
+    private static final int REQ_CAMERA_LIVE = 4;
+    private static final int REQ_CAMERA = 5;
 
     private KotobaWebView web;
     private WebViewAssetLoader assets;
@@ -68,11 +78,18 @@ public class MainActivity extends Activity {
     private File pendingPhoto;
     private Uri pendingPhotoUri;
     private String pendingLang;
+    private String[] pendingLive; // key, workspace, male: Live waiting for the microphone permission
     private int pendingSilenceMs;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        String problem = webViewProblem();
+        if (problem != null) {
+            showWebViewProblem(problem);
+            return;
+        }
+        LiveService.listener = this;
         if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) WebView.setWebContentsDebuggingEnabled(true);
 
         // Edge to edge: the page draws under the status and navigation bars and keeps clear of them itself
@@ -80,7 +97,12 @@ public class MainActivity extends Activity {
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(getColor(R.color.paper));
-        web = new KotobaWebView(this);
+        try {
+            web = new KotobaWebView(this);
+        } catch (RuntimeException e) {
+            showWebViewProblem("Android System WebView ne démarre pas sur ce téléphone.");
+            return;
+        }
         web.setBackgroundColor(getColor(R.color.paper));
         root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
@@ -105,6 +127,8 @@ public class MainActivity extends Activity {
 
         assets = new WebViewAssetLoader.Builder()
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
+                // a picture taken in camera live, handed to the page's photo translation
+                .addPathHandler("/photos/", new WebViewAssetLoader.InternalStoragePathHandler(this, new File(getCacheDir(), "photos")))
                 .build();
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -183,8 +207,68 @@ public class MainActivity extends Activity {
         speech.start(lang, silenceMs);
     }
 
+    // ---------- Live mode (LiveService) ----------
+
+    void startLive(String key, String workspace, boolean male) {
+        speech.cancel();
+        voice.stop();
+        boolean mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+        // the notification shows Live is on (and holds its Stop key): asked once, not required
+        boolean notify = Build.VERSION.SDK_INT < 33
+                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+        if (mic && notify) {
+            LiveService.start(this, key, workspace, male);
+            return;
+        }
+        pendingLive = new String[]{key, workspace, male ? "1" : ""};
+        requestPermissions(Build.VERSION.SDK_INT >= 33
+                ? new String[]{Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS}
+                : new String[]{Manifest.permission.RECORD_AUDIO}, REQ_LIVE);
+    }
+
+    // ---------- Camera live (CameraLiveActivity asks for the camera itself) ----------
+
+    void startCameraLive(String key, String workspace) {
+        speech.cancel();
+        voice.stop();
+        startActivityForResult(new Intent(this, CameraLiveActivity.class)
+                .putExtra(CameraLiveActivity.EXTRA_KEY, key)
+                .putExtra(CameraLiveActivity.EXTRA_WORKSPACE, workspace), REQ_CAMERA_LIVE);
+    }
+
+    @Override
+    public void onLive(JSONObject ev) {
+        web.evaluateJavascript("window.kotobaLive && kotobaLive(" + ev + ")", null);
+    }
+
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode == REQ_CAMERA) {
+            ValueCallback<Uri[]> callback = pendingFiles;
+            pendingFiles = null;
+            if (callback == null) return;
+            boolean granted = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+            // refused: the photo can still come from the gallery
+            if (!granted) toast("Sans l’autorisation Appareil photo, choisis une photo dans la galerie.");
+            if (!openPicker(callback, granted)) callback.onReceiveValue(null);
+            return;
+        }
+        if (requestCode == REQ_LIVE) {
+            String[] l = pendingLive;
+            pendingLive = null;
+            if (l == null) return;
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                LiveService.start(this, l[0], l[1], !l[2].isEmpty());
+            } else {
+                try {
+                    onLive(new JSONObject().put("type", "state").put("state", "error")
+                            .put("text", "Autorise le micro pour Kotoba (Réglages Android > Applis > Kotoba > Autorisations)."));
+                } catch (JSONException ignored) {
+                    // valid strings
+                }
+            }
+            return;
+        }
         if (requestCode != REQ_MIC) return;
         String lang = pendingLang;
         pendingLang = null;
@@ -266,14 +350,26 @@ public class MainActivity extends Activity {
         pendingFiles = null;
         pendingPhoto = null;
         pendingPhotoUri = null;
+        // The CAMERA permission (for camera live) makes Android refuse the camera app's photo intent
+        // while it is not granted (SecurityException: the app crashed, inside WebView): asked first.
+        if (camera && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            pendingFiles = callback;
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA);
+            return true;
+        }
+        return openPicker(callback, camera);
+    }
+
+    /** The camera app or the photo picker; false (callback untouched) if neither opens. */
+    private boolean openPicker(ValueCallback<Uri[]> callback, boolean camera) {
         Intent intent = camera ? cameraIntent() : galleryIntent();
         if (intent == null) return false;
         try {
             startActivityForResult(intent, REQ_FILES);
-        } catch (ActivityNotFoundException e) {
+        } catch (ActivityNotFoundException | SecurityException e) {
             pendingPhoto = null;
             pendingPhotoUri = null;
-            toast(camera ? "Aucune appli appareil photo trouvée." : "Aucune galerie trouvée.");
+            toast(camera ? "Impossible d’ouvrir l’appareil photo." : "Aucune galerie trouvée.");
             return false;
         }
         pendingFiles = callback;
@@ -306,6 +402,13 @@ public class MainActivity extends Activity {
     @Override
     @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQ_CAMERA_LIVE) {
+            String name = resultCode == RESULT_OK && data != null ? data.getStringExtra(CameraLiveActivity.EXTRA_PHOTO) : null;
+            if (name != null && name.matches("[\\w.-]+")) {
+                web.evaluateJavascript("window.kotobaPhoto && kotobaPhoto('/photos/" + name + "')", null);
+            }
+            return;
+        }
         if (requestCode != REQ_FILES) {
             super.onActivityResult(requestCode, resultCode, data);
             return;
@@ -346,6 +449,67 @@ public class MainActivity extends Activity {
             f.delete();
     }
 
+    // ---------- no WebView ----------
+
+    private static final String WEBVIEW = "com.google.android.webview";
+
+    /**
+     * The whole app is a page shown by Android System WebView. Missing, disabled or being updated:
+     * a clear message, not a crash. (No version check: not every maker numbers it like Chrome.)
+     */
+    private String webViewProblem() {
+        PackageInfo p;
+        try {
+            p = WebViewCompat.getCurrentWebViewPackage(this);
+        } catch (RuntimeException e) {
+            p = null;
+        }
+        return p == null ? "Android System WebView est absent ou désactivé sur ce téléphone." : null;
+    }
+
+    @SuppressLint("SetTextI18n") // the app is in French only
+    private void showWebViewProblem(String what) {
+        float d = getResources().getDisplayMetrics().density;
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.setBackgroundColor(getColor(R.color.paper));
+        int pad = Math.round(24 * d);
+        box.setPadding(pad, pad, pad, pad);
+        TextView title = new TextView(this);
+        title.setText("Kotoba ne peut pas s’ouvrir");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        title.setTextColor(0xFF151A2C);
+        TextView text = new TextView(this);
+        text.setText(what + "\n\nC’est le composant d’Android qui affiche Kotoba (et les pages dans beaucoup d’applis). "
+                + "Pour le remettre en état : Play Store, cherche « Android System WebView », touche « Mettre à jour » "
+                + "(ou « Activer »). Fais de même pour Chrome, puis redémarre le téléphone.\n\n"
+                + "« Désinstaller » sur WebView n’enlève que ses mises à jour : il suffit de le remettre à jour.");
+        text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        text.setTextColor(0xFF5D6479);
+        text.setPadding(0, Math.round(12 * d), 0, Math.round(20 * d));
+        Button store = new Button(this);
+        store.setText("Ouvrir WebView dans le Play Store");
+        store.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + WEBVIEW)));
+            } catch (ActivityNotFoundException e) {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + WEBVIEW)));
+            }
+        });
+        Button again = new Button(this);
+        again.setText("Réessayer");
+        again.setOnClickListener(v -> {
+            finish();
+            startActivity(new Intent(this, MainActivity.class));
+        });
+        box.addView(title);
+        box.addView(text);
+        box.addView(store);
+        box.addView(again);
+        setContentView(box);
+    }
+
     // ---------- misc ----------
 
     /** Light icons on the status and navigation bars: over the dark photo viewer, or in the dark theme. */
@@ -362,11 +526,15 @@ public class MainActivity extends Activity {
     @Override
     protected void onStart() {
         super.onStart();
-        web.onResume();
+        if (web != null && speech != null) web.onResume();
     }
 
     @Override
     protected void onStop() {
+        if (web == null || speech == null) { // no WebView: only the help screen is shown
+            super.onStop();
+            return;
+        }
         speech.cancel();
         voice.stop();
         web.onPause();
@@ -375,6 +543,12 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (LiveService.listener == this) LiveService.listener = null; // Live itself goes on
+        if (web == null || speech == null) {
+            if (web != null) web.destroy();
+            super.onDestroy();
+            return;
+        }
         speech.cancel();
         voice.shutdown();
         ((ViewGroup) web.getParent()).removeView(web);

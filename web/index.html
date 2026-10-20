@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' blob: data:; connect-src https://api.anthropic.com">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' blob: data:; connect-src 'self' https://api.anthropic.com">
 <meta name="theme-color" content="#F2F3F8" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0E1120" media="(prefers-color-scheme: dark)">
 <title>Kotoba</title>
@@ -20,6 +20,8 @@
       <span class="seal" aria-hidden="true"><span><b>言</b><b>葉</b></span></span>
       <div class="brand"><span class="name">Kotoba</span><span class="pair">Français ⇄ <span lang="ja">日本語</span></span></div>
       <span class="spacer"></span>
+      <button id="camLiveBtn" class="icon-btn" type="button" aria-label="Caméra live : traduire le japonais filmé" hidden></button>
+      <button id="liveBtn" class="icon-btn" type="button" aria-label="Live : traduire le japonais entendu autour de moi" hidden></button>
       <button id="favBtn" class="icon-btn" type="button" aria-pressed="false" aria-label="Afficher seulement les favoris"></button>
       <button id="clearBtn" class="icon-btn" type="button" aria-label="Effacer la conversation"></button>
       <button id="setBtn" class="icon-btn" type="button" aria-label="Réglages"></button>
@@ -79,6 +81,23 @@
     <p id="showRo" class="bigro"></p>
   </div>
   <div class="showacts"><button id="showSpeak" class="txt-btn" type="button"></button></div>
+</div>
+
+<div id="live" class="panel live" role="dialog" aria-modal="true" aria-labelledby="liveTitle" hidden>
+  <div class="panel-bar band">
+    <div class="live-head"><h2 id="liveTitle">Live</h2><p id="liveState" class="live-state" role="status"></p><div class="meter" aria-hidden="true"><i id="liveLevel"></i></div></div>
+    <button id="liveClose" class="icon-btn" type="button" aria-label="Arrêter et fermer"></button>
+  </div>
+  <div id="liveList" class="live-list band"></div>
+  <div class="live-foot band">
+    <p id="livePartial" class="live-partial" lang="ja"></p>
+    <button id="liveToggle" class="live-toggle" type="button"></button>
+    <details id="liveJournal" class="found">
+      <summary>Journal du Live (en cas de souci)</summary>
+      <pre id="liveLog" class="log"></pre>
+      <div class="set-acts"><button id="liveCopyLog" class="txt-btn" type="button">Copier le journal</button></div>
+    </details>
+  </div>
 </div>
 
 <div id="settings" class="panel" role="dialog" aria-modal="true" aria-labelledby="setTitle" hidden>
