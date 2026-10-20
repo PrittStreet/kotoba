@@ -89,8 +89,6 @@ public class LiveService extends Service implements RecognitionListener, TextToS
     // Boosted microphone (Android 13+): Kotoba records the phone's own microphone (never the
     // earphones'), raises quiet and distant voices, and hands that sound to the recognizer.
     private static final int RATE = 16000;
-    private static final float TARGET = 6000f;  // loudness the voices are raised to (of 32767)
-    private static final float MAX_GAIN = 8f;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable restart = this::listen;
@@ -443,19 +441,15 @@ public class LiveService extends Service implements RecognitionListener, TextToS
     private boolean startMic() {
         if (Build.VERSION.SDK_INT < 33) return false;
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return false;
-        int min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-        try {
-            mic = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE, AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT, Math.max(min, RATE * 2));
-        } catch (IllegalArgumentException | SecurityException e) {
-            note("micro amplifié impossible : " + e.getMessage());
-            mic = null;
-            return false;
-        }
-        if (mic.getState() != AudioRecord.STATE_INITIALIZED) {
+        // The raw microphone when the phone has it: its "voice recognition" sound is noise-reduced on
+        // some phones, and a voice far away (an actor on stage) sounds like noise to that filter.
+        // Agc does the loudness and removes the rumble.
+        boolean raw = "true".equals(getSystemService(AudioManager.class).getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED));
+        mic = open(raw ? MediaRecorder.AudioSource.UNPROCESSED : MediaRecorder.AudioSource.VOICE_RECOGNITION);
+        if (mic == null && raw) mic = open(MediaRecorder.AudioSource.VOICE_RECOGNITION);
+        else if (raw) note("micro brut, sans filtre");
+        if (mic == null) {
             note("micro amplifié indisponible");
-            mic.release();
-            mic = null;
             return false;
         }
         // the phone's microphone, even with earphones connected (theirs filters out the voices around)
@@ -481,12 +475,26 @@ public class LiveService extends Service implements RecognitionListener, TextToS
         return true;
     }
 
-    /** Microphone thread: raise the sound to a steady loudness and pass it to the current session. */
+    private AudioRecord open(int source) {
+        int min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+        try {
+            AudioRecord r = new AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, RATE * 2));
+            if (r.getState() == AudioRecord.STATE_INITIALIZED) return r;
+            r.release();
+        } catch (IllegalArgumentException | SecurityException e) {
+            note("micro amplifié impossible : " + e.getMessage());
+        }
+        return null;
+    }
+
+    /** Microphone thread: raise the voices to a steady loudness (Agc) and pass them to the current session. */
     private void pump() {
         short[] in = new short[RATE / 50]; // 20 ms
+        short[] raised = new short[in.length];
         byte[] out = new byte[in.length * 2];
         StructPollfd[] poll = {new StructPollfd()};
-        float gain = 1f, env = 0f;
+        Agc agc = new Agc();
+        long noted = 0;
         AudioRecord m = mic;
         while (m != null && boosted) {
             int n = m.read(in, 0, in.length);
@@ -494,21 +502,19 @@ public class LiveService extends Service implements RecognitionListener, TextToS
                 if (n < 0) break;
                 continue;
             }
-            double sum = 0;
-            for (int i = 0; i < n; i++) sum += (double) in[i] * in[i];
-            float rms = (float) Math.sqrt(sum / n);
-            env = rms > env ? rms : env * 0.995f + rms * 0.005f; // follows a voice up at once, down slowly
-            float want = env < 20f ? 1f : Math.min(MAX_GAIN, Math.max(1f, TARGET / env));
-            gain += (want - gain) * 0.05f;
+            float gain = agc.process(in, n, raised);
             for (int i = 0; i < n; i++) {
-                float v = in[i] * gain;
-                if (v > 24000f) v = 24000f + (v - 24000f) * 0.15f; // soft limit instead of clipping
-                else if (v < -24000f) v = -24000f + (v + 24000f) * 0.15f;
-                short x = (short) Math.max(-32767f, Math.min(32767f, v));
+                short x = raised[i];
                 out[2 * i] = (byte) (x & 0xff);
                 out[2 * i + 1] = (byte) ((x >> 8) & 0xff);
             }
-            level(Math.min(1f, rms * gain / 12000f));
+            level(Math.min(1f, agc.rms() * gain / 12000f));
+            // in the journal every 10 s: how loud the room is and how much it is raised, for the tuning
+            long now = SystemClock.elapsedRealtime();
+            if (now - noted > 10000) {
+                noted = now;
+                note(String.format(Locale.FRANCE, "son : fond %.0f, gain ×%.0f", agc.noise(), gain));
+            }
             ParcelFileDescriptor o = pipeOut;
             if (o == null) {
                 // between two phrases: kept (1 s at most) for the next session, so no word is lost

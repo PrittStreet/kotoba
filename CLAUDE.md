@@ -92,8 +92,14 @@ la version autonome passe par une **clé API Anthropic**, facturée à l'usage, 
     partial | phrase})`. Fermer l'écran Live arrête l'écoute ; rouvrir l'app pendant une session
     affiche l'écran Live. Xiaomi (HyperOS) : régler la batterie de Kotoba sur « Aucune restriction ».
     Sensibilité : sur Android 13+, Kotoba enregistre lui-même le micro du téléphone (`AudioRecord`,
-    jamais celui des écouteurs), relève les voix faibles ou lointaines (gain auto ≤ ×8, limiteur) et
-    passe ce son au recognizer (`EXTRA_AUDIO_SOURCE`, un tuyau par phrase). Si le recognizer ne le
+    jamais celui des écouteurs ; source `UNPROCESSED` quand le téléphone l'a, sinon
+    `VOICE_RECOGNITION` : l'anti-bruit de certains téléphones prend une voix lointaine pour du bruit),
+    relève les voix faibles ou lointaines (`Agc.java` : passe-haut 150 Hz contre la ventilation et le
+    ronflement, bruit de fond et voix suivis à part, gain jusqu'à ×120 sans monter le fond au-delà de
+    900, retour en ~0,5 s après une toux, limiteur ; voulu pour un acteur au théâtre dans une salle
+    silencieuse, où l'ancien gain ×8 laissait la voix pour du silence ; simulation dans le banc
+    d'essai : voix lointaine ×9 à ×12 plus forte qu'avant ; « son : fond …, gain × … » toutes les
+    10 s dans le journal) et passe ce son au recognizer (`EXTRA_AUDIO_SOURCE`, un tuyau par phrase). Si le recognizer ne le
     lit pas (1,5 s) ou échoue tout de suite 3 fois, retour au micro standard. Barre de niveau et
     journal (Copier) dans l'écran Live pour le dépannage. Avec ce son, le recognizer ne finit jamais
     une phrase seul : Kotoba coupe (1,2 s sans mot nouveau, ou toutes les 12 s), `stopListening`, et
