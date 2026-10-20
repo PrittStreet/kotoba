@@ -10,6 +10,7 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.media.AudioDeviceInfo;
 import android.media.AudioFormat;
@@ -25,6 +26,7 @@ import android.os.ParcelFileDescriptor;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.speech.RecognitionListener;
+import android.speech.RecognitionService;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
@@ -212,6 +214,7 @@ public class LiveService extends Service implements RecognitionListener, TextToS
         synchronized (journal) {
             journal.clear();
         }
+        noteRecognizers();
         boosted = startMic();
         note(boosted ? "micro du téléphone amplifié" : "micro standard de la reconnaissance vocale");
         create();
@@ -588,6 +591,18 @@ public class LiveService extends Service implements RecognitionListener, TextToS
         } catch (JSONException ignored) {
             // a number
         }
+    }
+
+    /** The speech recognizers installed, in the journal: another one than the default might hear better. */
+    private void noteRecognizers() {
+        PackageManager pm = getPackageManager();
+        StringBuilder b = new StringBuilder();
+        for (ResolveInfo r : pm.queryIntentServices(new Intent(RecognitionService.SERVICE_INTERFACE), 0)) {
+            if (b.length() > 0) b.append(", ");
+            b.append(r.loadLabel(pm)).append(" (").append(r.serviceInfo.packageName).append(')');
+        }
+        note("reconnaissances : " + (b.length() == 0 ? "aucune" : b)
+                + (Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this) ? " ; hors ligne : oui" : ""));
     }
 
     private static void note(String line) {
